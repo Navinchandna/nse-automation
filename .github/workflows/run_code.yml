@@ -4,19 +4,19 @@ on:
   schedule:
     # 17:00 UTC = रात 10:30 बजे भारतीय समयानुसार (IST)
     - cron: '0 17 * * *'
-  workflow_dispatch: # इससे आप जब चाहें खुद भी बटन दबाकर रन कर सकते हैं
+  workflow_dispatch: # इससे आप खुद मैन्युअल बटन दबाकर भी रन कर सकते हैं
 
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
     steps:
     - name: Copy Repository Code
-      uses: actions/checkout@v4 # v3 से v4 पर अपग्रेड कर दिया
+      uses: actions/checkout@v4
 
     - name: Load Python 3.11 Environment
-      uses: actions/setup-python@v5 # v4 से v5 पर अपग्रेड कर दिया
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.11' # यहाँ हमने वर्ज़न अपग्रेड कर दिया
         
     - name: Install Trading Libraries
       run: |
