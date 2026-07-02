@@ -12,23 +12,28 @@ from oauth2client.service_account import ServiceAccountCredentials
 # Windows 7 / Linux Compatibility
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- GOOGLE SHEETS CONNECTOR ---
+# --- GOOGLE SHEETS CONNECTOR (UPDATED) ---
 try:
     google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
     if not google_secrets:
         raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub!")
     
+    # गिटहब सीक्रेट से एक्स्ट्रा स्पेस या कचरों को साफ़ करना
+    google_secrets = google_secrets.strip()
     creds_dict = json.loads(google_secrets)
+    
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     
-    # आपकी गूगल शीट का नाम
+    # आपकी गूगल शीट का नाम (अक्षर-टू-अक्षर मैच होना चाहिए)
     sheet = client.open("NSE_Market_Data")
     print("Successfully connected to Google Sheets!")
 except Exception as e:
-    print(f"Initialization Error: {e}")
-    exit(1)
+    print(f"Google Connection Failed! Details: {e}")
+    # एरर आने पर भी कोड जबरदस्ती आगे न बढ़े इसलिए यहाँ रोक रहे हैं
+    import sys
+    sys.exit(1)
 
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 today_date = datetime.now().strftime("%Y-%m-%d")
