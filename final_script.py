@@ -227,5 +227,5 @@ if __name__ == "__main__":
     upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
-    upload_to_google_sheet('FII_DII_Cash_Daily', df_cash, unique_cols=\['Data_Date'\])
+    upload_to_google_sheet('FII_DII_Cash_Daily', df_cash, unique_cols=['Data_Date'])
     print("Process Finished Successfully!")
