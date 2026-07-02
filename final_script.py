@@ -14,37 +14,32 @@ import sys
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-today_date = datetime.now().strftime("%Y-%m-%d")
 
-# क्लाउड रन के लिए सबसे मजबूत ब्राउज़र हेडर
+# गिटहब (Linux) के लिए सबसे सुरक्षित और सिंपल हेडर
 headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive'
 }
 
-# --- GOOGLE SHEETS CONNECTOR (SECURE FIX) ---
+# --- GOOGLE SHEETS CONNECTOR ---
+print("Connecting to Google Sheets...")
 try:
-    # गिटहब के लॉकर से सीक्रेट्स उठाना
     google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
     if not google_secrets:
         raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub Settings!")
     
-    # स्ट्रिंग को साफ़ करके JSON में बदलना
     creds_dict = json.loads(google_secrets.strip())
-    
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     sheet = client.open("NSE_Market_Data")
-    print("Successfully connected to Google Sheets Securely!")
+    print("Successfully connected to Google Sheets!")
 except Exception as e:
-    print(f"Secure Google Connection Failed! Details: {e}")
+    print(f"Actual Google Connection Failed! Details: {e}")
     sys.exit(1)
 
-# NSE Archives (Bhavcopy और Participant OI) के लिए सेफ डाउनलोडर
-def download_nse_archive_file(url):
+# NSE Archives सेफ डाउनलोडर (यह कभी ब्लॉक नहीं होता)
+def download_nse_archive(url):
     try:
         res = requests.get(url, headers=headers, verify=False, timeout=15)
         if res.status_code == 200:
@@ -53,16 +48,17 @@ def download_nse_archive_file(url):
         pass
     return None
 
-# --- 1. Stock Names Tracker ---
+# --- 1. Stock Names Tracker (Bhavcopy से) ---
 def get_stock_wise_names_data():
+    print("Fetching Stock Wise Bhavcopy...")
     try:
         for i in range(5):
             target_date_obj = datetime.now() - timedelta(days=i)
             date_file = target_date_obj.strftime("%d%b%Y").upper()
             display_date = target_date_obj.strftime("%Y-%m-%d")
             url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
-            response = download_nse_archive_file(url)
-            if response and response.status_code == 200:
+            response = download_nse_archive(url)
+            if response:
                 with zipfile.ZipFile(io.BytesIO(response.content)) as z:
                     csv_name = f"fo{date_file}.csv"
                     with z.open(csv_name) as f: df = pd.read_csv(f)
@@ -72,7 +68,7 @@ def get_stock_wise_names_data():
                 df['CHG_IN_OI'] = pd.to_numeric(df['CHG_IN_OI'], errors='coerce').fillna(0)
                 stock_summary = df.groupby('SYMBOL').agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum', 'CLOSE': 'last'}).reset_index()
                 stock_summary = stock_summary.sort_values(by='CHG_IN_OI', ascending=False).reset_index(drop=True)
-                stock_summary['Trend_Signal'] = stock_summary['CHG_IN_OI'].apply(lambda x: '🟢 NEW POSITIONS BUILT' if x > 0 else '🔴 POSITIONS SQUARE OFF')
+                stock_summary['Trend_Signal'] = stock_summary['CHG_IN_OI'].apply(lambda x: '🟢 NEW POSITIONS' if x > 0 else '🔴 SQUARE OFF')
                 stock_summary['Data_Date'] = display_date
                 stock_summary['Download_Time'] = current_download_time
                 stock_summary.columns = ['STOCK_NAME', 'TOTAL_OPEN_INTEREST', 'TODAY_OI_CHANGE', 'LAST_PRICE', 'TREND_SIGNAL', 'Data_Date', 'Download_Time']
@@ -80,16 +76,17 @@ def get_stock_wise_names_data():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 2. Master F&O Data ---
+# --- 2. Master F&O Participant Data ---
 def get_master_participant_oi():
+    print("Fetching Participant OI Data...")
     try:
         for i in range(5):
             target_date_obj = datetime.now() - timedelta(days=i)
             target_date_str = target_date_obj.strftime("%d%m%Y")
             display_date = target_date_obj.strftime("%Y-%m-%d")
             url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
-            response = download_nse_archive_file(url)
-            if response and response.status_code == 200:
+            response = download_nse_archive(url)
+            if response:
                 lines = response.text.split('\n')
                 data_rows = [line.split(',') for line in lines if line.strip()][1:]
                 df = pd.DataFrame(data_rows)
@@ -131,40 +128,6 @@ def extract_stock_derivatives_data(df_master):
         return df[['Data_Date', 'Client Type', 'Stock_Market_Signal', 'Stock_Option_Total_Antar', 'Stock_Future_Net', 'Stock_Call_Net', 'Stock_Put_Net', 'Download_Time']]
     except: return pd.DataFrame()
 
-# --- 5. Index Wise Live OI ---
-def get_index_wise_live_oi(symbol_name):
-    try:
-        session = requests.Session()
-        session.verify = False
-        session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        url = f"https://www.nseindia.com/api/optionchain-indices?symbol={symbol_name}"
-        response = session.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            total_ce_oi = data.get('filtered', {}).get('CE', {}).get('totOI', 0)
-            total_pe_oi = data.get('filtered', {}).get('PE', {}).get('totOI', 0)
-            pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 0
-            return {'Data_Date': today_date, 'Download_Time': current_download_time, 'INDEX_SYMBOL': symbol_name, 'TOTAL_CALL_OI': total_ce_oi, 'TOTAL_PUT_OI': total_pe_oi, 'NET_OI_DIFFERENCE': total_ce_oi - total_pe_oi, 'LIVE_PCR': pcr}
-    except: pass
-    return None
-
-# --- 6. Cash Market ---
-def get_fii_dii_cash_data():
-    try:
-        session = requests.Session()
-        session.verify = False
-        session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        url = "https://www.nseindia.com/api/fiidii-trade-details"
-        response = session.get(url, headers=headers, timeout=15)
-        if response.status_code == 200 and response.text.strip():
-            df = pd.DataFrame(response.json())
-            if not df.empty:
-                df['Download_Time'] = current_download_time
-                if 'date' in df.columns: df = df.rename(columns={'date': 'Data_Date'})
-                return df
-        return pd.DataFrame()
-    except: return pd.DataFrame()
-
 # --- Google Sheets Append Engine ---
 def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
     if new_df is None or new_df.empty: 
@@ -195,38 +158,24 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
 
         worksheet.clear()
         worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
-        print(f"Appended metrics into Google Sheet: {sheet_name}")
+        print(f"Successfully uploaded: {sheet_name}")
     except Exception as e:
         print(f"Error uploading {sheet_name}: {e}")
 
 # --- Core Execution ---
 if __name__ == "__main__":
-    print("Starting Process Framework...")
+    print("Framework Started...")
     
-    print("Step 1: Downloading Archive Files...")
     df_stock_names = get_stock_wise_names_data()
     df_master = get_master_participant_oi()
     
-    print("Step 2: Processing Trading Signals...")
     df_index_signals = calculate_index_signals(df_master)
     df_stock_signals = extract_stock_derivatives_data(df_master)
     
-    print("Step 3: Fetching Live Data Fields...")
-    df_cash = get_fii_dii_cash_data()
-    
-    index_positions = []
-    n_stats = get_index_wise_live_oi("NIFTY")
-    b_stats = get_index_wise_live_oi("BANKNIFTY")
-    if n_stats: index_positions.append(n_stats)
-    if b_stats: index_positions.append(b_stats)
-    df_index_wise = pd.DataFrame(index_positions)
-
-    print("Step 4: Transmitting Data to Google Cloud Sheet...")
+    print("Writing Data to Google Sheets...")
     upload_to_google_sheet('Stock_Wise_Names_Live', df_stock_names, unique_cols=['STOCK_NAME', 'Data_Date'])
-    upload_to_google_sheet('Index_Wise_Positions', df_index_wise, unique_cols=['INDEX_SYMBOL', 'Download_Time'])
     upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
-    upload_to_google_sheet('FII_DII_Cash_Daily', df_cash, unique_cols=['Data_Date'])
     
     print("All tasks finished successfully!")
