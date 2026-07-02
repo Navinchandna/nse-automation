@@ -24,26 +24,28 @@ headers = {
     'Connection': 'keep-alive'
 }
 
-# --- GOOGLE SHEETS CONNECTOR ---
+# --- GOOGLE SHEETS CONNECTOR (SECURE FIX) ---
 try:
+    # गिटहब के लॉकर से सीक्रेट्स उठाना
     google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
     if not google_secrets:
-        raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub!")
+        raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub Settings!")
     
+    # स्ट्रिंग को साफ़ करके JSON में बदलना
     creds_dict = json.loads(google_secrets.strip())
+    
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     sheet = client.open("NSE_Market_Data")
-    print("Successfully connected to Google Sheets!")
+    print("Successfully connected to Google Sheets Securely!")
 except Exception as e:
-    print(f"Google Connection Failed! Details: {e}")
+    print(f"Secure Google Connection Failed! Details: {e}")
     sys.exit(1)
 
 # NSE Archives (Bhavcopy और Participant OI) के लिए सेफ डाउनलोडर
 def download_nse_archive_file(url):
     try:
-        # Archives के लिए नॉर्मल गेट रिक्वेस्ट बिना सेशन के भी बेस्ट चलती है
         res = requests.get(url, headers=headers, verify=False, timeout=15)
         if res.status_code == 200:
             return res
@@ -132,11 +134,9 @@ def extract_stock_derivatives_data(df_master):
 # --- 5. Index Wise Live OI ---
 def get_index_wise_live_oi(symbol_name):
     try:
-        # गिटहब सर्वर ब्लॉक न हो इसलिए लाइव कुकीज सेशन हर बार फ्रेश बनाना
         session = requests.Session()
         session.verify = False
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        
         url = f"https://www.nseindia.com/api/optionchain-indices?symbol={symbol_name}"
         response = session.get(url, headers=headers, timeout=15)
         if response.status_code == 200:
@@ -154,7 +154,6 @@ def get_fii_dii_cash_data():
         session = requests.Session()
         session.verify = False
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        
         url = "https://www.nseindia.com/api/fiidii-trade-details"
         response = session.get(url, headers=headers, timeout=15)
         if response.status_code == 200 and response.text.strip():
