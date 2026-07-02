@@ -16,32 +16,28 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 headers = {'User-Agent': 'Mozilla/5.0'}
 
-# --- GOOGLE SHEETS CONNECTOR (DIRECT SECURE CONFIG) ---
+# --- GOOGLE SHEETS CONNECTOR (FINAL SECURE ENGINE) ---
 print("Connecting to Google Sheets...")
 try:
-    # अपनी .json फाइल से देखकर नीचे इन 3 बॉक्स में सही वैल्यू भरें:
-    creds_dict = {
-        "type": "service_account",
-        "project_id": "nse-automation-tracker", # अगर प्रोजेक्ट आईडी अलग है तो बदलें
-        "private_key_id": "3090e631715075a173e7f13f3fb68456d0881c2b",
-        "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDCm7ZzAdMqNwep\nspR3do/Nzjv6kg+5WHr2SSH57QQ5nCHFv43qIP2TTh4w7Hj5Y9WYrFTaGzos6ZXC\nofErHmR/rlHZXOfUEZMK2YpMJlk07HuNP0QckDCAo7/8hMz2WL2H70aL3dMQO8pf\nYWpk2LMqhukDxQ1cx6+pDdCNDHmLO2UROZtDTjUJkAtKKkVXBB+fXeebFfpkdaa3\n8220q3J0cyE7lPNsze7cnSWZCJHmUGc1jJRX4Bb2PGZohdsZ7c3J9xjdJ+KiT/x3\n4sQtSic7ekpRh4AsCCSjeuZ1VPm1G9ZQs1aododQFgXphWD+PfClfvzL/zN4J4wT\n2aKxI8IbAgMBAAECggEATXLu/4JAadKQyCZ8E7cpr/xdvnEWtOrTtOSSEwcS4WKT\nxkFf10fd4xv5w/q4gngK78HV2x9u3aTwpw8QDdsAoBfeFyV0Vd/Qp0bAVWIFqpxa\n53HAR6XSx79jjrnDYF8cvtapOszDTPiep6r7Trs3QruCTK/Fi6Ek9aC72QaX8KK2\nK53CGMzun27tZVzPPoFg3/YNXxYiD3D2+XCHQcl6NO4+MFa2owFZHlajYOhIl1Ul\nsb7+Bn0/XnyAQeNHBcAkKTl1mH25x9uj1mq+z9ydhqi4yyyXVgL5zp75nQrGjetY\nbpr0oznNWqoazhcp6YV28sHA1nBXvQKQteWso1LmMQKBgQD2BDz6ruyVGcsjpMJF\n9c/LqcyAU3huqZbfrbnq7vcW4cTy0dwQ/ydwLMTII8D0Z09X+7tdML0aO6ZBXdsG\nvbBy1b0ZMnsOMT0oyaeiiAbWPP80lzC/9XfYYwSoiwiGjme5Fi74FWUp4tMG6IM9\npdbGAWFzqkCWRXUdavGZQePEFQKBgQDKgWpYKFhdZ9VEuwlznjWmN5NukjI3Fn6u\nwM/VZL4nQQN24fgauya9MXKLg/dzGSUDJPaI+jq9y+HVC0LChpw62EvVrYIwoU+l\nE9UKkuoGEmw/6iUZvdBkk+wy1/C9lTQ9ArvGGnlXalKMcGQ7K36o17yGtyPTnq5L\nAabRxckJbwKBgQCVYJNqHyZVjhjTJqozcoLehdY/IO+iOeT7IfAeX0S2pxU/3v8B\nbvwSV4yQfW0euU/q+1WTyxE3SXq0e/mOyUTHJVKxZv5i6rDZAECCJpgII3dOBnM6\nSyCeydi9QdZGZVdDgd25EryfRzOdITb3CqgzCAmVAo4+8COhXhseVGyo1QKBgDsD\nyhUU9OOLrfhQtalvEt101s9jZaTuNk8BO9BJgqz34mWT5vULU3fRYDtOYx+01Td8\nXyh+G/5R22d116fPCNqRTFBiN02qxQYrqGtjczX/ynI570P4MDIPdcc/bRYi1E1v\nbX+HGZOjFZl964fe3hOgg32TA6rZVJvhSFdb14GbAoGBALXpe9hkWB54IwmGqHZM\nnsZqCKZKOE+JXeZbjuAEZoZuIdzR21reAUm9Bify0yoopzQErUHWxDdewbEaY3Lo\nLMghxGihP5WkzYJUQKdgAOezSB69+NSG4oexYOHUImng8BrKxqtHzeo1RRq37Zvr\nJ0418v9yw6XO/dH8S5IKJRxH\n-----END PRIVATE KEY-----\n",
-        "client_email": "nse-tracker@sheetsapi-project-467812.iam.gserviceaccount.com",
-        "client_id": "123456789", # इसमें कुछ भी लिखा रहने दे सकते हैं
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
-    }
+    # गिटहब के सुरक्षित लॉकर (Settings -> Secrets) से डेटा उठाना
+    google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
+    if not google_secrets:
+        raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub Settings!")
     
-    # न्यू लाइन कैरेक्टर फिक्स करना ताकि की (Key) टूटे नहीं
-    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    # सीक्रेट टेक्स्ट को साफ़ करके JSON डिक्शनरी में बदलना
+    creds_dict = json.loads(google_secrets.strip())
     
+    # न्यू लाइन कैरेक्टर को सही फॉर्मेट में सेट करना
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     sheet = client.open("NSE_Market_Data")
-    print("Successfully connected to Google Sheets Dynamically!")
+    print("Successfully connected to Google Sheets Securely!")
 except Exception as e:
-    print(f"Actual Google Connection Failed! Details: {e}")
+    print(f"Secure Google Connection Failed! Details: {e}")
     sys.exit(1)
 
 # NSE Archives डाउनलोडर
