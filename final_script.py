@@ -14,41 +14,45 @@ import sys
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+headers = {'User-Agent': 'Mozilla/5.0'}
 
-# गिटहब (Linux) के लिए सबसे सुरक्षित और सिंपल हेडर
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-}
-
-# --- GOOGLE SHEETS CONNECTOR ---
+# --- GOOGLE SHEETS CONNECTOR (DIRECT SECURE CONFIG) ---
 print("Connecting to Google Sheets...")
 try:
-    google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
-    if not google_secrets:
-        raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub Settings!")
+    # अपनी .json फाइल से देखकर नीचे इन 3 बॉक्स में सही वैल्यू भरें:
+    creds_dict = {
+        "type": "service_account",
+        "project_id": "nse-automation-tracker", # अगर प्रोजेक्ट आईडी अलग है तो बदलें
+        "private_key_id": "3090e631715075a173e7f13f3fb68456d0881c2b",
+        "private_key": ""-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDCm7ZzAdMqNwep\nspR3do/Nzjv6kg+5WHr2SSH57QQ5nCHFv43qIP2TTh4w7Hj5Y9WYrFTaGzos6ZXC\nofErHmR/rlHZXOfUEZMK2YpMJlk07HuNP0QckDCAo7/8hMz2WL2H70aL3dMQO8pf\nYWpk2LMqhukDxQ1cx6+pDdCNDHmLO2UROZtDTjUJkAtKKkVXBB+fXeebFfpkdaa3\n8220q3J0cyE7lPNsze7cnSWZCJHmUGc1jJRX4Bb2PGZohdsZ7c3J9xjdJ+KiT/x3\n4sQtSic7ekpRh4AsCCSjeuZ1VPm1G9ZQs1aododQFgXphWD+PfClfvzL/zN4J4wT\n2aKxI8IbAgMBAAECggEATXLu/4JAadKQyCZ8E7cpr/xdvnEWtOrTtOSSEwcS4WKT\nxkFf10fd4xv5w/q4gngK78HV2x9u3aTwpw8QDdsAoBfeFyV0Vd/Qp0bAVWIFqpxa\n53HAR6XSx79jjrnDYF8cvtapOszDTPiep6r7Trs3QruCTK/Fi6Ek9aC72QaX8KK2\nK53CGMzun27tZVzPPoFg3/YNXxYiD3D2+XCHQcl6NO4+MFa2owFZHlajYOhIl1Ul\nsb7+Bn0/XnyAQeNHBcAkKTl1mH25x9uj1mq+z9ydhqi4yyyXVgL5zp75nQrGjetY\nbpr0oznNWqoazhcp6YV28sHA1nBXvQKQteWso1LmMQKBgQD2BDz6ruyVGcsjpMJF\n9c/LqcyAU3huqZbfrbnq7vcW4cTy0dwQ/ydwLMTII8D0Z09X+7tdML0aO6ZBXdsG\nvbBy1b0ZMnsOMT0oyaeiiAbWPP80lzC/9XfYYwSoiwiGjme5Fi74FWUp4tMG6IM9\npdbGAWFzqkCWRXUdavGZQePEFQKBgQDKgWpYKFhdZ9VEuwlznjWmN5NukjI3Fn6u\nwM/VZL4nQQN24fgauya9MXKLg/dzGSUDJPaI+jq9y+HVC0LChpw62EvVrYIwoU+l\nE9UKkuoGEmw/6iUZvdBkk+wy1/C9lTQ9ArvGGnlXalKMcGQ7K36o17yGtyPTnq5L\nAabRxckJbwKBgQCVYJNqHyZVjhjTJqozcoLehdY/IO+iOeT7IfAeX0S2pxU/3v8B\nbvwSV4yQfW0euU/q+1WTyxE3SXq0e/mOyUTHJVKxZv5i6rDZAECCJpgII3dOBnM6\nSyCeydi9QdZGZVdDgd25EryfRzOdITb3CqgzCAmVAo4+8COhXhseVGyo1QKBgDsD\nyhUU9OOLrfhQtalvEt101s9jZaTuNk8BO9BJgqz34mWT5vULU3fRYDtOYx+01Td8\nXyh+G/5R22d116fPCNqRTFBiN02qxQYrqGtjczX/ynI570P4MDIPdcc/bRYi1E1v\nbX+HGZOjFZl964fe3hOgg32TA6rZVJvhSFdb14GbAoGBALXpe9hkWB54IwmGqHZM\nnsZqCKZKOE+JXeZbjuAEZoZuIdzR21reAUm9Bify0yoopzQErUHWxDdewbEaY3Lo\nLMghxGihP5WkzYJUQKdgAOezSB69+NSG4oexYOHUImng8BrKxqtHzeo1RRq37Zvr\nJ0418v9yw6XO/dH8S5IKJRxH\n-----END PRIVATE KEY-----\n",
+        "client_email": "nse-tracker@sheetsapi-project-467812.iam.gserviceaccount.com",
+        "client_id": "123456789", # इसमें कुछ भी लिखा रहने दे सकते हैं
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
+    }
     
-    creds_dict = json.loads(google_secrets.strip())
+    # न्यू लाइन कैरेक्टर फिक्स करना ताकि की (Key) टूटे नहीं
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     sheet = client.open("NSE_Market_Data")
-    print("Successfully connected to Google Sheets!")
+    print("Successfully connected to Google Sheets Dynamically!")
 except Exception as e:
     print(f"Actual Google Connection Failed! Details: {e}")
     sys.exit(1)
 
-# NSE Archives सेफ डाउनलोडर (यह कभी ब्लॉक नहीं होता)
+# NSE Archives डाउनलोडर
 def download_nse_archive(url):
     try:
         res = requests.get(url, headers=headers, verify=False, timeout=15)
-        if res.status_code == 200:
-            return res
-    except:
-        pass
+        if res.status_code == 200: return res
+    except: pass
     return None
 
-# --- 1. Stock Names Tracker (Bhavcopy से) ---
+# --- 1. Stock Names Tracker ---
 def get_stock_wise_names_data():
     print("Fetching Stock Wise Bhavcopy...")
     try:
@@ -130,9 +134,7 @@ def extract_stock_derivatives_data(df_master):
 
 # --- Google Sheets Append Engine ---
 def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
-    if new_df is None or new_df.empty: 
-        print(f"Skipping {sheet_name} as dataframe is empty.")
-        return
+    if new_df is None or new_df.empty: return
     try:
         try:
             worksheet = sheet.worksheet(sheet_name)
@@ -153,8 +155,7 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
             combined = pd.concat([old_df, new_df], ignore_index=True)
             if unique_cols:
                 combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
-        else:
-            combined = new_df
+        else: combined = new_df
 
         worksheet.clear()
         worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
@@ -165,10 +166,8 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
 # --- Core Execution ---
 if __name__ == "__main__":
     print("Framework Started...")
-    
     df_stock_names = get_stock_wise_names_data()
     df_master = get_master_participant_oi()
-    
     df_index_signals = calculate_index_signals(df_master)
     df_stock_signals = extract_stock_derivatives_data(df_master)
     
@@ -177,5 +176,4 @@ if __name__ == "__main__":
     upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
-    
     print("All tasks finished successfully!")
