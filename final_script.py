@@ -8,39 +8,49 @@ import requests
 import urllib3
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import sys
 
-# Windows 7 / Linux Compatibility
+# Warnings बंद करना
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- GOOGLE SHEETS CONNECTOR (UPDATED) ---
+# --- GOOGLE SHEETS CONNECTOR ---
 try:
     google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
     if not google_secrets:
         raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub!")
     
-    # गिटहब सीक्रेट से एक्स्ट्रा स्पेस या कचरों को साफ़ करना
-    google_secrets = google_secrets.strip()
-    creds_dict = json.loads(google_secrets)
-    
+    creds_dict = json.loads(google_secrets.strip())
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    
-    # आपकी गूगल शीट का नाम (अक्षर-टू-अक्षर मैच होना चाहिए)
     sheet = client.open("NSE_Market_Data")
     print("Successfully connected to Google Sheets!")
 except Exception as e:
     print(f"Google Connection Failed! Details: {e}")
-    # एरर आने पर भी कोड जबरदस्ती आगे न बढ़े इसलिए यहाँ रोक रहे हैं
-    import sys
     sys.exit(1)
 
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 today_date = datetime.now().strftime("%Y-%m-%d")
+
+# क्लाउड रन के लिए सबसे मजबूत ब्राउज़र हेडर
 headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive'
 }
+
+# NSE API को बायपास करने के लिए सेशन बनाने वाला स्मार्ट हेल्पर
+def get_nse_session():
+    session = requests.Session()
+    session.verify = False
+    try:
+        # पहले होमपेज पर जाकर कुकीज़ चुराना
+        session.get("https://www.nseindia.com", headers=headers, timeout=15)
+    except:
+        pass
+    return session
 
 # --- 1. Stock Names Tracker ---
 def get_stock_wise_names_data():
@@ -121,12 +131,9 @@ def extract_stock_derivatives_data(df_master):
     except: return pd.DataFrame()
 
 # --- 5. Index Wise Live OI ---
-def get_index_wise_live_oi(symbol_name):
+def get_index_wise_live_oi(session, symbol_name):
     try:
         url = f"https://www.nseindia.com/api/optionchain-indices?symbol={symbol_name}"
-        session = requests.Session()
-        session.verify = False
-        session.get("https://www.nseindia.com", headers=headers, timeout=15)
         response = session.get(url, headers=headers, timeout=15)
         if response.status_code == 200:
             data = response.json()
@@ -150,12 +157,9 @@ def get_index_wise_live_oi(symbol_name):
     return None
 
 # --- 6. Cash Market ---
-def get_fii_dii_cash_data():
+def get_fii_dii_cash_data(session):
     try:
         url = "https://www.nseindia.com/api/fiidii-trade-details"
-        session = requests.Session()
-        session.verify = False
-        session.get("https://www.nseindia.com", headers=headers, timeout=15)
         response = session.get(url, headers=headers, timeout=15)
         if response.status_code == 200 and response.text.strip():
             df = pd.DataFrame(response.json())
@@ -181,7 +185,6 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
         existing_records = worksheet.get_all_records()
         if existing_records:
             old_df = pd.DataFrame(existing_records)
-            # पुराने और नए डेटा के कॉलम मैच करना
             for col in new_df.columns:
                 if col not in old_df.columns: old_df[col] = ''
             for col in old_df.columns:
@@ -201,16 +204,19 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
 
 # --- Core Execution ---
 if __name__ == "__main__":
+    print("Initializing NSE Session helper...")
+    nse_session = get_nse_session()
+    
     print("Fetching and computing F&O metrics...")
     df_stock_names = get_stock_wise_names_data()
     df_master = get_master_participant_oi()
     df_index_signals = calculate_index_signals(df_master)
     df_stock_signals = extract_stock_derivatives_data(df_master)
-    df_cash = get_fii_dii_cash_data()
+    df_cash = get_fii_dii_cash_data(nse_session)
     
     index_positions = []
-    n_stats = get_index_wise_live_oi("NIFTY")
-    b_stats = get_index_wise_live_oi("BANKNIFTY")
+    n_stats = get_index_wise_live_oi(nse_session, "NIFTY")
+    b_stats = get_index_wise_live_oi(nse_session, "BANKNIFTY")
     if n_stats: index_positions.append(n_stats)
     if b_stats: index_positions.append(b_stats)
     df_index_wise = pd.DataFrame(index_positions)
@@ -221,5 +227,5 @@ if __name__ == "__main__":
     upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
-    upload_to_google_sheet('FII_DII_Cash_Daily', df_cash, unique_cols=['Data_Date'])
+    upload_to_google_sheet('FII_DII_Cash_Daily', df_cash, unique_cols=\['Data_Date'\])
     print("Process Finished Successfully!")
