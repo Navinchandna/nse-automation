@@ -53,14 +53,15 @@ def download_nse_file(url):
         print(f"❌ Network issue: {e}")
     return None
 
-# 📊 न्यू इंजन: नाम के हिसाब से इंडेक्स और स्टॉक के CE/PE का डेटा निकालना
-def process_script_wise_ce_pe(available_date_obj):
+# 📊 न्यू स्क्रिप्ट-वाइज एनालिसिस इंजन (नाम के साथ CE/PE डेटा)
+def extract_script_wise_options(available_date_obj):
     date_file = available_date_obj.strftime("%d%b%Y").upper()
     display_date = available_date_obj.strftime("%Y-%m-%d")
     url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
     
     response = download_nse_file(url)
     if not response:
+        print("⚠️ Bhavcopy file could not be downloaded for script-wise analysis.")
         return pd.DataFrame(), pd.DataFrame()
         
     try:
@@ -71,42 +72,52 @@ def process_script_wise_ce_pe(available_date_obj):
                 
         df.columns = [c.strip() for c in df.columns]
         
-        # केवल ऑप्शंस डेटा फ़िल्टर करना (CE और PE)
-        df_opt = df[df['INSTRUMENT'].isin(['OPTIDX', 'OPTSTK'])].copy()
-        df_opt['OPEN_INT'] = pd.to_numeric(df_opt['OPEN_INT'], errors='coerce').fillna(0)
-        df_opt['CHG_IN_OI'] = pd.to_numeric(df_opt['CHG_IN_OI'], errors='coerce').fillna(0)
+        # केवल ऑप्शंस इंस्ट्रूमेंट्स फिल्टर करना (OPTIDX = Index Options, OPTSTK = Stock Options)
+        df_options = df[df['INSTRUMENT'].isin(['OPTIDX', 'OPTSTK'])].copy()
+        df_options['OPEN_INT'] = pd.to_numeric(df_options['OPEN_INT'], errors='coerce').fillna(0)
+        df_options['CHG_IN_OI'] = pd.to_numeric(df_options['CHG_IN_OI'], errors='coerce').fillna(0)
         
-        # 1. इंडेक्स वाइस CE/PE ब्रेकअप (Nifty, BankNifty, etc.)
-        df_idx = df_opt[df_opt['INSTRUMENT'] == 'OPTIDX'].copy()
-        idx_summary = df_idx.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
+        # 1️⃣ इंडेक्स वाइज कैलकुलेशन (NIFTY, BANKNIFTY, etc.)
+        df_idx = df_options[df_options['INSTRUMENT'] == 'OPTIDX']
+        idx_grp = df_idx.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
         
-        idx_pivot = idx_summary.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
+        idx_pivot = idx_grp.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
         idx_pivot.columns = [f"{col[1]}_{col[0]}" for col in idx_pivot.columns]
         idx_pivot = idx_pivot.reset_index()
-        idx_pivot['Data_Date'] = display_date
-        idx_pivot['Download_Time'] = current_download_time
         
-        # कॉलम्स को आसान नाम देना
-        idx_final = idx_pivot[['Data_Date', 'SYMBOL', 'CE_OPEN_INT', 'CE_CHG_IN_OI', 'PE_OPEN_INT', 'PE_CHG_IN_OI', 'Download_Time']].copy()
-        idx_final.columns = ['Data_Date', 'Index_Name', 'Call_Total_OI', 'Call_OI_Change', 'Put_Total_OI', 'Put_OI_Change', 'Download_Time']
+        idx_final = pd.DataFrame()
+        idx_final['Data_Date'] = [display_date] * len(idx_pivot)
+        idx_final['Index_Name'] = idx_pivot['SYMBOL']
+        idx_final['Call_Total_OI'] = idx_pivot['CE_OPEN_INT'].astype(int)
+        idx_final['Call_OI_Change'] = idx_pivot['CE_CHG_IN_OI'].astype(int)
+        idx_final['Put_Total_OI'] = idx_pivot['PE_OPEN_INT'].astype(int)
+        idx_final['Put_OI_Change'] = idx_pivot['PE_CHG_IN_OI'].astype(int)
+        idx_final['Download_Time'] = [current_download_time] * len(idx_pivot)
         
-        # 2. केवल एक्टिव F&O स्टॉक्स का CE/PE ब्रेकअप (Reliance, Kotak, etc.)
-        df_stk = df_opt[df_opt['INSTRUMENT'] == 'OPTSTK'].copy()
-        stk_summary = df_stk.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
+        # 2️⃣ स्टॉक वाइज कैलकुलेशन (Reliance, Kotak, etc. - Only Real F&O Stocks)
+        df_stk = df_options[df_options['INSTRUMENT'] == 'OPTSTK']
+        stk_grp = df_stk.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
         
-        stk_pivot = stk_summary.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
+        stk_pivot = stk_grp.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
         stk_pivot.columns = [f"{col[1]}_{col[0]}" for col in stk_pivot.columns]
         stk_pivot = stk_pivot.reset_index()
-        stk_pivot['Data_Date'] = display_date
-        stk_pivot['Download_Time'] = current_download_time
         
-        stk_final = stk_pivot[['Data_Date', 'SYMBOL', 'CE_OPEN_INT', 'CE_CHG_IN_OI', 'PE_OPEN_INT', 'PE_CHG_IN_OI', 'Download_Time']].copy()
-        stk_final.columns = ['Data_Date', 'Stock_Name', 'Call_Total_OI', 'Call_OI_Change', 'Put_Total_OI', 'Put_OI_Change', 'Download_Time']
-        stk_final = stk_final.sort_values(by='Call_OI_Change', ascending=False).reset_index(drop=True)
+        stk_final = pd.DataFrame()
+        stk_final['Data_Date'] = [display_date] * len(stk_pivot)
+        stk_final['Stock_Name'] = stk_pivot['SYMBOL']
+        stk_final['Call_Total_OI'] = stk_pivot['CE_OPEN_INT'].astype(int)
+        stk_final['Call_OI_Change'] = stk_pivot['CE_CHG_IN_OI'].astype(int)
+        stk_final['Put_Total_OI'] = stk_pivot['PE_OPEN_INT'].astype(int)
+        stk_final['Put_OI_Change'] = stk_pivot['PE_CHG_IN_OI'].astype(int)
+        stk_final['Download_Time'] = [current_download_time] * len(stk_pivot)
+        
+        # सबसे ज्यादा एक्टिव ऑप्शंस वाले स्टॉक्स को ऊपर दिखाने के लिए सॉर्ट करना
+        stk_final['Absolute_Chg'] = stk_final['Call_OI_Change'].abs() + stk_final['Put_OI_Change'].abs()
+        stk_final = stk_final.sort_values(by='Absolute_Chg', ascending=False).drop(columns=['Absolute_Chg']).reset_index(drop=True)
         
         return idx_final, stk_final
     except Exception as e:
-        print(f"❌ Error processing Script Wise CE/PE: {e}")
+        print(f"❌ Error in script wise processing: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
 def get_master_participant_oi(response_obj, available_date_obj):
@@ -124,13 +135,35 @@ def get_master_participant_oi(response_obj, available_date_obj):
         print(f"❌ Error parsing CSV: {e}")
     return pd.DataFrame()
 
+def calculate_futures_breakup(df_master):
+    if df_master.empty: return pd.DataFrame()
+    try:
+        df = df_master.copy()
+        cols_to_convert = ['Future Index Long', 'Future Index Short', 'Future Stock Long', 'Future Stock Short']
+        for col in cols_to_convert: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+        breakup_df = pd.DataFrame()
+        breakup_df['Data_Date'] = df['Data_Date']
+        breakup_df['Client_Type'] = df['Client Type']
+        breakup_df['Index_Fut_Long'] = df['Future Index Long']
+        breakup_df['Index_Fut_Short'] = df['Future Index Short']
+        breakup_df['Index_Fut_Net'] = df['Future Index Long'] - df['Future Index Short']
+        breakup_df['Stock_Fut_Long'] = df['Future Stock Long']
+        breakup_df['Stock_Fut_Short'] = df['Future Stock Short']
+        breakup_df['Stock_Fut_Net'] = df['Future Stock Long'] - df['Future Stock Short']
+        breakup_df['Index_Sentiment'] = breakup_df['Index_Fut_Net'].apply(lambda x: '🟢 BULLISH LONG' if x > 0 else '🔴 BEARISH SHORT')
+        breakup_df['Stock_Sentiment'] = breakup_df['Stock_Fut_Net'].apply(lambda x: '🟢 STOCKS LONG' if x > 0 else '🔴 STOCKS SHORT')
+        breakup_df['Download_Time'] = df['Download_Time']
+        return breakup_df
+    except: return pd.DataFrame()
+
 def upload_to_google_sheet(sheet, sheet_name, new_df, unique_cols=None):
     if new_df is None or new_df.empty: return
     try:
         print(f"⏳ Syncing tab: '{sheet_name}'...")
         try: worksheet = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=sheet_name, rows="4000", cols="20")
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="3000", cols="25")
             worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
             print(f"✅ Created fresh tab: '{sheet_name}'")
             return
@@ -164,7 +197,7 @@ if __name__ == "__main__":
         time.sleep(1)
 
     if not valid_date_obj:
-        print("❌ CRITICAL: NSE data files not ready. Stopping pipeline.")
+        print("❌ CRITICAL: NSE servers blocked data fetch or files not ready. Stopping pipeline.")
         sys.exit(1)
         
     target_display_date = valid_date_obj.strftime("%Y-%m-%d")
@@ -172,13 +205,15 @@ if __name__ == "__main__":
 
     print("\n=== PROCESSING CORES ===")
     df_master = get_master_participant_oi(saved_response, valid_date_obj)
+    df_futures_breakup = calculate_futures_breakup(df_master)
     
-    # ⚡ नए इंडेक्स और स्टॉक वाइज CE/PE डेटा को प्रोसेस करना
-    df_index_ce_pe, df_stock_ce_pe = process_script_wise_ce_pe(valid_date_obj)
+    # ⚡ नाम के साथ इंडेक्स और स्टॉक्स के ऑप्शंस का डेटा निकालना
+    df_idx_options, df_stk_options = extract_script_wise_options(valid_date_obj)
     
     print("\n=== UPLOADING TO GOOGLE SHEET ===")
-    upload_to_google_sheet(sheet, 'Index_Wise_Options_Live', df_index_ce_pe, unique_cols=['Index_Name', 'Data_Date'])
-    upload_to_google_sheet(sheet, 'Stock_Wise_Options_Live', df_stock_ce_pe, unique_cols=['Stock_Name', 'Data_Date'])
+    upload_to_google_sheet(sheet, 'Index_Wise_CE_PE_OI', df_idx_options, unique_cols=['Index_Name', 'Data_Date'])
+    upload_to_google_sheet(sheet, 'Stock_Wise_CE_PE_OI', df_stk_options, unique_cols=['Stock_Name', 'Data_Date'])
+    upload_to_google_sheet(sheet, 'Index_Stock_Futures_Breakup', df_futures_breakup, unique_cols=['Client_Type', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
     
     print("\n=== 🎉 ALL PROCESSES COMPLETED SUCCESSFULLY ===")
