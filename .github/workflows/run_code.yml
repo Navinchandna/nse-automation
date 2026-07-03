@@ -1,27 +1,32 @@
-name: NSE Auto Refresh Daily
+name: NSE Automation Tracker
 
 on:
+  workflow_dispatch:
   schedule:
-    # 17:00 UTC = रात 10:30 बजे भारतीय समयानुसार (IST)
-    - cron: '0 17 * * *'
-  workflow_dispatch: # इससे आप खुद मैन्युअल बटन दबाकर भी रन कर सकते हैं
+    - cron: '30 14 * * 1-5' # सोमवार से शुक्रवार हर शाम 8:00 PM IST (14:30 UTC) पर खुद चलेगा
 
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
-    steps:
-    - name: Copy Repository Code
-      uses: actions/checkout@v4
 
-    - name: Load Python 3.11 Environment
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11' # यहाँ हमने वर्ज़न अपग्रेड कर दिया
-        
-    - name: Execute Live Tracker
+    steps:
+      - name: Copy Repository Code
+        uses: actions/checkout@v4
+
+      - name: Load Python 3.11 Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Trading Libraries
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests urllib3 gspread oauth2client
+
+      - name: Execute Live Tracker
         env:
           MY_SECRET_KEY: ${{ secrets.MY_SECRET_KEY }}
         run: |
-          # सीक्रेट को सीधे एक सीक्रेट फाइल में राइट करना
           echo "$MY_SECRET_KEY" > google_creds.json
           python final_script.py
