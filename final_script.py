@@ -20,6 +20,41 @@ headers = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
+# --- GOOGLE SHEETS CONNECTOR ---
+print("Connecting to Google Sheets...")
+try:
+    raw_env_data = os.environ.get('GOOGLE_CREDENTIALS')
+    if not raw_env_data:
+        raise ValueError("MY_SECRET_KEY is empty or not found in GitHub Env!")
+    
+    creds_dict = json.loads(raw_env_data.strip())
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("NSE_Market_Data")
+    print("Successfully connected to Google Sheets!")
+except Exception as e:
+    print(f"Google Connection Failed! Details: {e}")
+    sys.exit(1)
+
+# --- CHECK IF DATA ALREADY EXISTS IN SHEET ---
+def check_date_exists_in_sheet(sheet_name, target_date_str):
+    try:
+        worksheet = sheet.worksheet(sheet_name)
+        existing_records = worksheet.get_all_records()
+        if existing_records:
+            df_existing = pd.DataFrame(existing_records)
+            # चेक करना कि क्या target_date_str (YYYY-MM-DD) पहले से कॉलम में है
+            if 'Data_Date' in df_existing.columns:
+                dates_list = df_existing['Data_Date'].astype(str).tolist()
+                if target_date_str in dates_list:
+                    return True
+    except: pass
+    return False
+
 def download_nse_file(url):
     session = requests.Session()
     session.verify = False
@@ -32,53 +67,52 @@ def download_nse_file(url):
     except: pass
     return None
 
-def get_stock_wise_names_data():
-    print("Fetching Stock Wise Bhavcopy...")
-    # अगर आज का डेटा न मिले (मार्केट ऑवर में), तो यह पिछले 10 दिनों में से जो भी लेटेस्ट फाइल होगी उसे उठा लेगा
-    for i in range(0, 10): 
-        target_date_obj = datetime.now() - timedelta(days=i)
-        date_file = target_date_obj.strftime("%d%b%Y").upper()
-        display_date = target_date_obj.strftime("%Y-%m-%d")
-        url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
-        response = download_nse_file(url)
-        if response:
-            try:
-                with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-                    csv_name = f"fo{date_file}.csv"
-                    with z.open(csv_name) as f: df = pd.read_csv(f)
-                df.columns = [c.strip() for c in df.columns]
-                df = df[~df['SYMBOL'].isin(['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'])]
-                df['OPEN_INT'] = pd.to_numeric(df['OPEN_INT'], errors='coerce').fillna(0)
-                df['CHG_IN_OI'] = pd.to_numeric(df['CHG_IN_OI'], errors='coerce').fillna(0)
-                stock_summary = df.groupby('SYMBOL').agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum', 'CLOSE': 'last'}).reset_index()
-                stock_summary = stock_summary.sort_values(by='CHG_IN_OI', ascending=False).reset_index(drop=True)
-                stock_summary['Trend_Signal'] = stock_summary['CHG_IN_OI'].apply(lambda x: '🟢 NEW POSITIONS' if x > 0 else '🔴 SQUARE OFF')
-                stock_summary['Data_Date'] = display_date
-                stock_summary['Download_Time'] = current_download_time
-                stock_summary.columns = ['STOCK_NAME', 'TOTAL_OPEN_INTEREST', 'TODAY_OI_CHANGE', 'LAST_PRICE', 'TREND_SIGNAL', 'Data_Date', 'Download_Time']
-                return stock_summary
-            except: continue
+def get_stock_wise_names_data(available_date_obj=None):
+    if available_date_obj is None: return pd.DataFrame()
+    date_file = available_date_obj.strftime("%d%b%Y").upper()
+    display_date = available_date_obj.strftime("%Y-%m-%d")
+    print(f"Downloading Stock Wise Bhavcopy for {display_date}...")
+    
+    url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
+    response = download_nse_file(url)
+    if response:
+        try:
+            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                csv_name = f"fo{date_file}.csv"
+                with z.open(csv_name) as f: df = pd.read_csv(f)
+            df.columns = [c.strip() for c in df.columns]
+            df = df[~df['SYMBOL'].isin(['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'])]
+            df['OPEN_INT'] = pd.to_numeric(df['OPEN_INT'], errors='coerce').fillna(0)
+            df['CHG_IN_OI'] = pd.to_numeric(df['CHG_IN_OI'], errors='coerce').fillna(0)
+            stock_summary = df.groupby('SYMBOL').agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum', 'CLOSE': 'last'}).reset_index()
+            stock_summary = stock_summary.sort_values(by='CHG_IN_OI', ascending=False).reset_index(drop=True)
+            stock_summary['Trend_Signal'] = stock_summary['CHG_IN_OI'].apply(lambda x: '🟢 NEW POSITIONS' if x > 0 else '🔴 SQUARE OFF')
+            stock_summary['Data_Date'] = display_date
+            stock_summary['Download_Time'] = current_download_time
+            stock_summary.columns = ['STOCK_NAME', 'TOTAL_OPEN_INTEREST', 'TODAY_OI_CHANGE', 'LAST_PRICE', 'TREND_SIGNAL', 'Data_Date', 'Download_Time']
+            return stock_summary
+        except: pass
     return pd.DataFrame()
 
-def get_master_participant_oi():
-    print("Fetching Participant OI Data...")
-    for i in range(0, 10):
-        target_date_obj = datetime.now() - timedelta(days=i)
-        target_date_str = target_date_obj.strftime("%d%m%Y")
-        display_date = target_date_obj.strftime("%Y-%m-%d")
-        url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
-        response = download_nse_file(url)
-        if response:
-            try:
-                lines = response.text.split('\n')
-                data_rows = [line.split(',') for line in lines if line.strip()][1:]
-                df = pd.DataFrame(data_rows)
-                df.columns = [c.replace('"', '').strip() for c in df.iloc[0]]
-                df = df[1:].reset_index(drop=True)
-                df['Data_Date'] = display_date
-                df['Download_Time'] = current_download_time
-                return df
-            except: continue
+def get_master_participant_oi(available_date_obj=None):
+    if available_date_obj is None: return pd.DataFrame()
+    target_date_str = available_date_obj.strftime("%d%m%Y")
+    display_date = available_date_obj.strftime("%Y-%m-%d")
+    print(f"Downloading Participant OI Data for {display_date}...")
+    
+    url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
+    response = download_nse_file(url)
+    if response:
+        try:
+            lines = response.text.split('\n')
+            data_rows = [line.split(',') for line in lines if line.strip()][1:]
+            df = pd.DataFrame(data_rows)
+            df.columns = [c.replace('"', '').strip() for c in df.iloc[0]]
+            df = df[1:].reset_index(drop=True)
+            df['Data_Date'] = display_date
+            df['Download_Time'] = current_download_time
+            return df
+        except: pass
     return pd.DataFrame()
 
 def calculate_index_signals(df_oi):
@@ -109,64 +143,83 @@ def extract_stock_derivatives_data(df_master):
         return df[['Data_Date', 'Client Type', 'Stock_Market_Signal', 'Stock_Option_Total_Antar', 'Stock_Future_Net', 'Stock_Call_Net', 'Stock_Put_Net', 'Download_Time']]
     except: return pd.DataFrame()
 
+def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
+    if new_df is None or new_df.empty: return
+    try:
+        try: worksheet = sheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="2000", cols="20")
+            worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
+            return
+
+        existing_records = worksheet.get_all_records()
+        if existing_records:
+            old_df = pd.DataFrame(existing_records)
+            for col in new_df.columns:
+                if col not in old_df.columns: old_df[col] = ''
+            for col in old_df.columns:
+                if col not in new_df.columns: new_df[col] = ''
+            combined = pd.concat([old_df, new_df], ignore_index=True)
+            if unique_cols:
+                combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
+        else: combined = new_df
+
+        worksheet.clear()
+        worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
+        print(f"Successfully uploaded/appended: {sheet_name}")
+    except Exception as e:
+        print(f"Error uploading {sheet_name}: {e}")
+
 if __name__ == "__main__":
     print("Framework Started...")
-    df_stock_names = get_stock_wise_names_data()
-    df_master = get_master_participant_oi()
+    
+    # 1. सबसे पहले चेक करेंगे कि NSE पर कौन सी लेटेस्ट तारीख का डेटा उपलब्ध है
+    valid_date_obj = None
+    for i in range(0, 10):
+        test_date = datetime.now() - timedelta(days=i)
+        test_date_str = test_date.strftime("%d%m%Y")
+        url_check = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{test_date_str}.csv"
+        
+        # यूआरएल चेक इंजन
+        session = requests.Session()
+        session.verify = False
+        try:
+            session.get("https://www.nseindia.com", headers=headers, timeout=5)
+            res = session.head(url_check, headers=headers, timeout=5)
+            if res.status_code == 200:
+                valid_date_obj = test_date
+                break
+        except: continue
+
+    if not valid_date_obj:
+        print("No valid file found on NSE for the last 10 days.")
+        sys.exit(0)
+        
+    target_display_date = valid_date_obj.strftime("%Y-%m-%d")
+    print(f"Latest available date on NSE is: {target_display_date}")
+
+    # 2. गूगल शीट रीड करेंगे और चेक करेंगे कि क्या इस तारीख का डेटा पहले से है?
+    print("Checking if this date already exists in your Google Sheet...")
+    already_exists = check_date_exists_in_sheet('Derivatives_OI_Data', target_display_date)
+    
+    if already_exists:
+        print(f"Data for {target_display_date} ALREADY EXISTS in Google Sheet. Skipping download to save time and prevent duplication.")
+        sys.exit(0)
+        
+    # 3. अगर डेटा पहले से नहीं है, केवल तभी डाउनलोड और अपलोड शुरू होगा
+    print(f"Data for {target_display_date} is missing. Starting fresh download...")
+    df_stock_names = get_stock_wise_names_data(valid_date_obj)
+    df_master = get_master_participant_oi(valid_date_obj)
     df_index_signals = calculate_index_signals(df_master)
     df_stock_signals = extract_stock_derivatives_data(df_master)
     
-    # अगर डेटा पूरी तरह खाली है तो गूगल शीट इंजन को जबरदस्ती रोकने के लिए चेक
     if df_stock_names.empty and df_master.empty:
-        print("No recent data available on NSE right now. Skipping Google Sheets update to avoid crashes.")
+        print("Data download returned empty blocks. Exiting.")
         sys.exit(0)
-
-    # --- GOOGLE SHEETS CONNECTOR (यहीं ट्रांसफर किया ताकि ब्लैंक डेटा पर फालतू में कनेक्ट न हो) ---
-    print("Connecting to Google Sheets...")
-    try:
-        raw_env_data = os.environ.get('GOOGLE_CREDENTIALS')
-        creds_dict = json.loads(raw_env_data.strip())
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("NSE_Market_Data")
-        print("Successfully connected to Google Sheets Securely!")
-    except Exception as e:
-        print(f"Google Sheets Connection Failed! Check credentials. Error: {e}")
-        sys.exit(1)
-
+        
     print("Writing Data to Google Sheets...")
-    
-    # सुरक्षित अपलोडिंग इंजन
-    def safe_upload(sheet_name, new_df, unique_cols):
-        if new_df.empty: return
-        try:
-            try: worksheet = sheet.worksheet(sheet_name)
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = sheet.add_worksheet(title=sheet_name, rows="2000", cols="20")
-                worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
-                return
-            existing = worksheet.get_all_records()
-            if existing:
-                old_df = pd.DataFrame(existing)
-                for col in new_df.columns:
-                    if col not in old_df.columns: old_df[col] = ''
-                for col in old_df.columns:
-                    if col not in new_df.columns: new_df[col] = ''
-                combined = pd.concat([old_df, new_df], ignore_index=True)
-                if unique_cols: combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
-            else: combined = new_df
-            worksheet.clear()
-            worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
-            print(f"Uploaded: {sheet_name}")
-        except Exception as ex: print(f"Sheet Error {sheet_name}: {ex}")
-
-    safe_upload('Stock_Wise_Names_Live', df_stock_names, ['STOCK_NAME', 'Data_Date'])
-    safe_upload('Stock_Derivatives_OI', df_stock_signals, ['Client Type', 'Data_Date'])
-    safe_upload('Trading_Signals_Color', df_index_signals, ['Client Type', 'Data_Date'])
-    safe_upload('Derivatives_OI_Data', df_master, ['Client Type', 'Data_Date'])
-    
+    upload_to_google_sheet('Stock_Wise_Names_Live', df_stock_names, unique_cols=['STOCK_NAME', 'Data_Date'])
+    upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
+    upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
+    upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
     print("All tasks finished successfully!")
