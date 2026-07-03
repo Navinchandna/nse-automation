@@ -16,11 +16,11 @@ current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive'
 }
 
+# --- GOOGLE SHEETS CONNECTOR ---
 print("Connecting to Google Sheets...")
 try:
     raw_env_data = os.environ.get('GOOGLE_CREDENTIALS')
@@ -40,30 +40,27 @@ except Exception as e:
     print(f"Google Connection Failed! Details: {e}")
     sys.exit(1)
 
-# Advanced NSE Downloader with Cookie Bypass
-def download_nse_with_cookies(url):
+def download_nse_file(url):
     session = requests.Session()
     session.verify = False
     try:
-        # First hit homepage to get fresh cookies
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        time.sleep(2)
+        time.sleep(1)
         res = session.get(url, headers=headers, timeout=15)
-        if res.status_code == 200 and len(res.content) > 1000: # Ensure it's not an empty/error page
+        if res.status_code == 200 and len(res.content) > 2000:
             return res
-    except Exception as e:
-        print(f"Download failed for {url}: {e}")
+    except: pass
     return None
 
 def get_stock_wise_names_data():
     print("Fetching Stock Wise Bhavcopy...")
     try:
-        for i in range(5):
+        for i in range(1, 10):
             target_date_obj = datetime.now() - timedelta(days=i)
             date_file = target_date_obj.strftime("%d%b%Y").upper()
             display_date = target_date_obj.strftime("%Y-%m-%d")
             url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
-            response = download_nse_with_cookies(url)
+            response = download_nse_file(url)
             if response:
                 with zipfile.ZipFile(io.BytesIO(response.content)) as z:
                     csv_name = f"fo{date_file}.csv"
@@ -85,12 +82,12 @@ def get_stock_wise_names_data():
 def get_master_participant_oi():
     print("Fetching Participant OI Data...")
     try:
-        for i in range(5):
+        for i in range(1, 10):
             target_date_obj = datetime.now() - timedelta(days=i)
             target_date_str = target_date_obj.strftime("%d%m%Y")
             display_date = target_date_obj.strftime("%Y-%m-%d")
             url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
-            response = download_nse_with_cookies(url)
+            response = download_nse_file(url)
             if response:
                 lines = response.text.split('\n')
                 data_rows = [line.split(',') for line in lines if line.strip()][1:]
@@ -132,16 +129,13 @@ def extract_stock_derivatives_data(df_master):
     except: return pd.DataFrame()
 
 def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
-    if new_df is None or new_df.empty: 
-        print(f"Skipping {sheet_name}: DataFrame is empty.")
-        return
+    if new_df is None or new_df.empty: return
     try:
         try:
             worksheet = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title=sheet_name, rows="2000", cols="20")
             worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
-            print(f"Created new sheet: {sheet_name}")
             return
 
         existing_records = worksheet.get_all_records()
