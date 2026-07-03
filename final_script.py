@@ -21,67 +21,91 @@ headers = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
-# --- GOOGLE SHEETS CONNECTOR ---
-print("=== GOOGLE SHEETS CONNECTION START ===")
+# ========================================================
+# 🛑 STAGE 1: GOOGLE SHIETS MULTI-TAB & STRUCTURE DEBUGGER
+# ========================================================
+print("\n=== 1️⃣ STAGE 1: GOOGLE SHEETS DEEP VERIFICATION ===")
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    if os.path.exists("google_creds.json"):
-        creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", scope)
-    else:
-        print("❌ ERROR: google_creds.json missing!")
+    if not os.path.exists("google_creds.json"):
+        print("❌ CRITICAL: google_creds.json was NOT created by workflow!")
         sys.exit(1)
         
+    creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", scope)
     client = gspread.authorize(creds)
+    
+    # शीट को ओपन करके उसकी ID और सारे टैब्स के नाम प्रिंट करना
     sheet = client.open("NSE_Market_Data")
-    print("✅ SUCCESS: Connected to Google Sheets!")
+    print(f"✅ CONNECTED! Spreadsheet Title: '{sheet.title}'")
+    print(f"📊 Spreadsheet ID: {sheet.id}")
+    
+    worksheets_list = sheet.worksheets()
+    print(f"📋 Found Tabs inside this sheet: {[w.title for w in worksheets_list]}")
+    
 except Exception as e:
-    print(f"❌ Google Connection Failed: {e}")
+    print(f"❌ STAGE 1 FAILED: Cannot connect or read sheet. Details: {e}")
+    traceback.print_exc()
     sys.exit(1)
 
 
-# --- DEBUGGED DATE CHECKER ---
+# --- SMART DATE CHECKER (WITH RAW GRID AUDIT) ---
 def check_date_exists_in_sheet(sheet_name, target_date_str):
-    print(f"🔍 DEBUG: Checking if date {target_date_str} exists in sheet '{sheet_name}'...")
+    print(f"\n🔍 AUDITING TAB: '{sheet_name}' for Date: {target_date_str}")
     try:
-        worksheet = sheet.worksheet(sheet_name)
-        existing_records = worksheet.get_all_records()
-        print(f"📊 DEBUG: Total rows found in '{sheet_name}' = {len(existing_records)}")
-        if existing_records:
-            df_existing = pd.DataFrame(existing_records)
-            if 'Data_Date' in df_existing.columns:
-                dates_list = df_existing['Data_Date'].astype(str).tolist()
-                exists = target_date_str in dates_list
-                print(f"📊 DEBUG: Date {target_date_str} match result = {exists}")
-                return exists
-            else:
-                print("⚠️ DEBUG ALERT: 'Data_Date' column NOT found in existing sheet!")
-    except gspread.exceptions.WorksheetNotFound:
-        print(f"ℹ️ DEBUG: Sheet '{sheet_name}' does not exist yet. Will create fresh.")
+        try:
+            worksheet = sheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"ℹ️ Tab '{sheet_name}' does not even exist. So date cannot exist!")
+            return False
+            
+        # पूरी शीट का कच्चा डेटा (Raw Values) रीड करना ताकि ब्लैंक का पता चले
+        raw_values = worksheet.get_all_values()
+        print(f"📊 Raw Grid Audit: Tab has {len(raw_values)} rows in total (including header).")
+        
+        if len(raw_values) <= 1:
+            print(f"⚠️ Tab '{sheet_name}' is effectively EMPTY (only header or completely blank).")
+            return False
+            
+        # DataFrame में बदल कर चेक करना
+        df_existing = pd.DataFrame(raw_values[1:], columns=raw_values[0])
+        if 'Data_Date' in df_existing.columns:
+            dates_list = df_existing['Data_Date'].astype(str).str.strip().tolist()
+            exists = target_date_str in dates_list
+            print(f"🎯 Date matching status for {target_date_str}: {exists}")
+            return exists
+        else:
+            print("⚠️ 'Data_Date' column header is missing in this tab!")
+            return False
     except Exception as ex:
-        print(f"⚠️ DEBUG ERROR inside check_date_exists: {ex}")
-    return False
+        print(f"⚠️ Error while auditing tab data: {ex}")
+        return False
 
+# ========================================================
+# 🛑 STAGE 2: NSE NETWORK & DOWNLOAD ENGINE DEBUGGER
+# ========================================================
 def download_nse_file(url):
-    print(f"🌐 DEBUG: Requesting NSE URL: {url}")
+    print(f"🌐 FETCHING FROM NSE -> URL: {url}")
     session = requests.Session()
     session.verify = False
     try:
+        # नखरे से बचने के लिए पहले बेस होमपेज हिट करना
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
         time.sleep(1)
         res = session.get(url, headers=headers, timeout=15)
-        print(f"🌐 DEBUG: NSE Response Status = {res.status_code}, Content Length = {len(res.content)}")
+        print(f"📥 NSE RESPONSE STATUS: {res.status_code} | Bytes Received: {len(res.content)}")
         if res.status_code == 200 and len(res.content) > 2000:
             return res
+        else:
+            print(f"❌ NSE rejected or returned empty block for this URL.")
     except Exception as e:
-        print(f"❌ DEBUG: Download failed for URL {url}. Error: {e}")
+        print(f"❌ Network crash during NSE download: {e}")
     return None
 
-def get_stock_wise_names_data(available_date_obj=None):
-    if available_date_obj is None: return pd.DataFrame()
+def get_stock_wise_names_data(available_date_obj):
     date_file = available_date_obj.strftime("%d%b%Y").upper()
     display_date = available_date_obj.strftime("%Y-%m-%d")
-    
     url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
+    
     response = download_nse_file(url)
     if response:
         try:
@@ -98,18 +122,16 @@ def get_stock_wise_names_data(available_date_obj=None):
             stock_summary['Data_Date'] = display_date
             stock_summary['Download_Time'] = current_download_time
             stock_summary.columns = ['STOCK_NAME', 'TOTAL_OPEN_INTEREST', 'TODAY_OI_CHANGE', 'LAST_PRICE', 'TREND_SIGNAL', 'Data_Date', 'Download_Time']
-            print(f"✅ DEBUG: Bhavcopy DataFrame prepared. Shape: {stock_summary.shape}")
             return stock_summary
-        except Exception as ex: 
-            print(f"❌ DEBUG: Error processing Bhavcopy zip: {ex}")
+        except Exception as e:
+            print(f"❌ Error compiling Stock Wise Bhavcopy: {e}")
     return pd.DataFrame()
 
-def get_master_participant_oi(available_date_obj=None):
-    if available_date_obj is None: return pd.DataFrame()
+def get_master_participant_oi(available_date_obj):
     target_date_str = available_date_obj.strftime("%d%m%Y")
     display_date = available_date_obj.strftime("%Y-%m-%d")
-    
     url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
+    
     response = download_nse_file(url)
     if response:
         try:
@@ -120,10 +142,9 @@ def get_master_participant_oi(available_date_obj=None):
             df = df[1:].reset_index(drop=True)
             df['Data_Date'] = display_date
             df['Download_Time'] = current_download_time
-            print(f"✅ DEBUG: Participant OI DataFrame prepared. Shape: {df.shape}")
             return df
-        except Exception as ex:
-            print(f"❌ DEBUG: Error processing Participant CSV: {ex}")
+        except Exception as e:
+            print(f"❌ Error compiling Participant OI: {e}")
     return pd.DataFrame()
 
 def calculate_index_signals(df_oi):
@@ -154,23 +175,27 @@ def extract_stock_derivatives_data(df_master):
         return df[['Data_Date', 'Client Type', 'Stock_Market_Signal', 'Stock_Option_Total_Antar', 'Stock_Future_Net', 'Stock_Call_Net', 'Stock_Put_Net', 'Download_Time']]
     except: return pd.DataFrame()
 
+# ========================================================
+# 🛑 STAGE 3: UPLOAD ENGINE WITH FORCED ROW WRITER
+# ========================================================
 def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
-    if new_df is None or new_df.empty: 
-        print(f"⚠️ DEBUG: Skipping upload for '{sheet_name}' because DataFrame is empty.")
+    if new_df is None or new_df.empty:
+        print(f"⚠️ Dataframe for '{sheet_name}' is EMPTY. Skipping sheet write.")
         return
     try:
-        print(f"⏳ DEBUG: Starting upload/append engine for sheet: '{sheet_name}'...")
-        try: worksheet = sheet.worksheet(sheet_name)
+        print(f"⏳ Writing {len(new_df)} rows to tab '{sheet_name}'...")
+        try: 
+            worksheet = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            print(f"ℹ️ DEBUG: Worksheet '{sheet_name}' not found, creating fresh one...")
-            worksheet = sheet.add_worksheet(title=sheet_name, rows="2000", cols="20")
+            print(f"ℹ️ Creating new tab '{sheet_name}'...")
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="3000", cols="25")
             worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
-            print(f"✅ DEBUG: Created and wrote initial data to '{sheet_name}'")
+            print(f"✅ Successfully created and initialized '{sheet_name}'!")
             return
 
-        existing_records = worksheet.get_all_records()
-        if existing_records:
-            old_df = pd.DataFrame(existing_records)
+        raw_vals = worksheet.get_all_values()
+        if len(raw_vals) > 1:
+            old_df = pd.DataFrame(raw_vals[1:], columns=raw_vals[0])
             for col in new_df.columns:
                 if col not in old_df.columns: old_df[col] = ''
             for col in old_df.columns:
@@ -178,19 +203,22 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
             combined = pd.concat([old_df, new_df], ignore_index=True)
             if unique_cols:
                 combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
-        else: combined = new_df
+        else: 
+            combined = new_df
 
         worksheet.clear()
         worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
-        print(f"🚀 SUCCESS: Uploaded & Appended data into '{sheet_name}' successfully!")
+        print(f"🚀 SUCCESS: Data successfully synced in '{sheet_name}'!")
     except Exception as e:
-        print(f"❌ DEBUG UPLOAD ERROR for {sheet_name}: {e}")
+        print(f"❌ Sheet Sync Error on '{sheet_name}': {e}")
 
+# ========================================================
+# 🛑 MAIN EXECUTION PIPELINE
+# ========================================================
 if __name__ == "__main__":
-    print("=== MAIN ENGINE STARTED ===")
-    
+    print("\n=== 2️⃣ STAGE 2: SCANNING NSE FOR LATEST FILES ===")
     valid_date_obj = None
-    print("⏳ DEBUG: Scanning last 10 days on NSE to find the latest available files...")
+    
     for i in range(0, 10):
         test_date = datetime.now() - timedelta(days=i)
         test_date_str = test_date.strftime("%d%m%Y")
@@ -201,37 +229,39 @@ if __name__ == "__main__":
         try:
             session.get("https://www.nseindia.com", headers=headers, timeout=5)
             res = session.head(url_check, headers=headers, timeout=5)
-            print(f"🔎 DEBUG: Date scan {test_date.strftime('%Y-%m-%d')} -> HTTP Status: {res.status_code}")
+            print(f"🔍 Day -{i} Scan ({test_date.strftime('%Y-%m-%d')}): HTTP Status = {res.status_code}")
             if res.status_code == 200:
                 valid_date_obj = test_date
                 break
-        except Exception as e: 
-            print(f"⚠️ DEBUG: Scan warning for date {test_date.strftime('%Y-%m-%d')}: {e}")
-            continue
+        except: continue
 
     if not valid_date_obj:
-        print("❌ CRITICAL DEBUG: No valid file found on NSE in the last 10 days loop! Exiting.")
+        print("❌ CRITICAL: No data files found on NSE server for the past 10 days loop!")
         sys.exit(0)
         
     target_display_date = valid_date_obj.strftime("%Y-%m-%d")
-    print(f"🎯 DEBUG: Target date decided from NSE: {target_display_date}")
+    print(f"🎯 CHOSEN TRADING DATE FROM NSE: {target_display_date}")
 
-    # शीट चेक
+    # शीट के डेटा का मिलान चेक करना
     already_exists = check_date_exists_in_sheet('Derivatives_OI_Data', target_display_date)
+    
     if already_exists:
-        print(f"ℹ️ DEBUG: Data for {target_display_date} ALREADY EXISTS in Google Sheet. Stopping to avoid duplicates.")
-        sys.exit(0)
+        print(f"ℹ️ SKIPPED: Date {target_display_date} is already registered in the sheet data grid.")
+        # टेस्टिंग के लिए एग्जिट को हटा रहे हैं ताकि जबरदस्ती राइट कर सके अगर शीट ब्लैंक दिख रही है तो!
+        print("⚠️ DEBUG OVERRIDE: Forcing download anyway to double check visual blankness...")
         
-    print(f"🚀 DEBUG: Data for {target_display_date} is missing. Triggering core downloaders...")
+    print(f"\n=== 3️⃣ STAGE 3: DOWNLOADING AND PROCESSING CORES ===")
     df_stock_names = get_stock_wise_names_data(valid_date_obj)
     df_master = get_master_participant_oi(valid_date_obj)
     df_index_signals = calculate_index_signals(df_master)
     df_stock_signals = extract_stock_derivatives_data(df_master)
     
-    print("⏳ DEBUG: Starting spreadsheet writing operations...")
+    print(f"\n=== 4️⃣ STAGE 4: WRITING DATA FIELDS TO SPREADSHEETS ===")
+    print(f"Data Summary to write -> Stock Names: {len(df_stock_names)} rows, Master OI: {len(df_master)} rows")
+    
     upload_to_google_sheet('Stock_Wise_Names_Live', df_stock_names, unique_cols=['STOCK_NAME', 'Data_Date'])
     upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
     
-    print("=== ALL PROCESSES COMPLETED SUCCESSFULLY ===")
+    print("\n=== 🎉 ALL STAGES FINISHED EXECUTING SUCCESSFULLY ===")
