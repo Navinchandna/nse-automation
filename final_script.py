@@ -73,7 +73,7 @@ def extract_script_wise_options(available_date_obj):
         df_options['OPEN_INT'] = pd.to_numeric(df_options['OPEN_INT'], errors='coerce').fillna(0)
         df_options['CHG_IN_OI'] = pd.to_numeric(df_options['CHG_IN_OI'], errors='coerce').fillna(0)
         
-        # इंडेक्स कैलकुलेशन
+        # इंडेक्स कैलकुलेशन (Nifty, BankNifty, etc.)
         df_idx = df_options[df_options['INSTRUMENT'] == 'OPTIDX']
         idx_grp = df_idx.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
         idx_pivot = idx_grp.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
@@ -89,7 +89,7 @@ def extract_script_wise_options(available_date_obj):
         idx_final['Put_OI_Change'] = idx_pivot['PE_CHG_IN_OI'].astype(int)
         idx_final['Download_Time'] = [current_download_time] * len(idx_pivot)
         
-        # स्टॉक कैलकुलेशन (Only Real F&O Stocks)
+        # स्टॉक कैलकुलेशन (Reliance, Kotak, etc. - Only Active F&O Stocks)
         df_stk = df_options[df_options['INSTRUMENT'] == 'OPTSTK']
         stk_grp = df_stk.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
         stk_pivot = stk_grp.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
@@ -128,7 +128,7 @@ def get_master_participant_oi(response_obj, available_date_obj):
         print(f"❌ Error parsing CSV: {e}")
     return pd.DataFrame()
 
-# 📊 2. डेली चेंज कैलकुलेटर इंजन (Figures & % Change Tracker)
+# 📊 2. डेली चेंज कैलकुलेटर इंजन (Figures & % Change Tracker) - लिमिटेड कॉलम्स के साथ ताकि एरर न आए
 def track_daily_changes(sheet, new_master_df, current_date_str):
     print("⏳ Calculating daily changes over previous trading day...")
     try:
@@ -147,13 +147,12 @@ def track_daily_changes(sheet, new_master_df, current_date_str):
 
         last_available_date = df_old_days['Data_Date'].max()
         df_prev_day = df_old_days[df_old_days['Data_Date'] == last_available_date].copy()
-        print(f"📊 Comparing today ({current_date_str}) against last saved sheet date ({last_available_date})")
 
         change_rows = []
+        # केवल मुख्य कॉलम्स ले रहे हैं ताकि शीट क्रैश न हो (कॉलम Z के अंदर रहे)
         numeric_cols = [
             'Future Index Long', 'Future Index Short', 'Future Stock Long', 'Future Stock Short',
-            'Option Index Call Long', 'Option Index Call Short', 'Option Index Put Long', 'Option Index Put Short',
-            'Option Stock Call Long', 'Option Stock Call Short', 'Option Stock Put Long', 'Option Stock Put Short'
+            'Option Index Call Long', 'Option Index Call Short', 'Option Index Put Long', 'Option Index Put Short'
         ]
 
         for client in ['CLIENT', 'DII', 'FII', 'PRO', 'TOTAL']:
@@ -162,7 +161,7 @@ def track_daily_changes(sheet, new_master_df, current_date_str):
 
             if today_client.empty or prev_client.empty: continue
 
-            row_data = {'Data_Date': current_date_str, 'Compared_With_Date': last_available_date, 'Client_Type': client}
+            row_data = {'Data_Date': current_date_str, 'Client_Type': client}
 
             for col in numeric_cols:
                 val_today = pd.to_numeric(today_client[col].values[0], errors='coerce') or 0
@@ -171,9 +170,9 @@ def track_daily_changes(sheet, new_master_df, current_date_str):
                 diff = val_today - val_prev
                 pct_change = (diff / val_prev * 100) if val_prev != 0 else (100.0 if diff > 0 else 0.0)
 
-                col_clean = col.replace(' ', '_')
-                row_data[f'{col_clean}_Chg_Qty'] = int(diff)
-                row_data[f'{col_clean}_Chg_Pct'] = f"{pct_change:+.1f}%"
+                col_clean = col.replace('Future ', 'Fut_').replace('Option Index ', 'Idx_').replace(' Long', '_L').replace(' Short', '_S')
+                row_data[f'{col_clean}_Chg'] = int(diff)
+                row_data[f'{col_clean}_Pct'] = f"{pct_change:+.1f}%"
 
             change_rows.append(row_data)
 
@@ -200,17 +199,19 @@ def calculate_futures_breakup(df_master):
         breakup_df['Stock_Fut_Net'] = df['Future Stock Long'] - df['Future Stock Short']
         breakup_df['Index_Sentiment'] = breakup_df['Index_Fut_Net'].apply(lambda x: '🟢 BULLISH LONG' if x > 0 else '🔴 BEARISH SHORT')
         breakup_df['Stock_Sentiment'] = breakup_df['Stock_Fut_Net'].apply(lambda x: '🟢 STOCKS LONG' if x > 0 else '🔴 STOCKS SHORT')
-        breakup_df['Download_Time'] = df['Download_Time']
         return breakup_df
     except: return pd.DataFrame()
 
+# 🛠️ गूगल शीट अपलोडर (फिक्स्ड विद कॉलम लिमिटेशन सेफगार्ड)
 def upload_to_google_sheet(sheet, sheet_name, new_df, unique_cols=None):
     if new_df is None or new_df.empty: return
     try:
         print(f"⏳ Syncing tab: '{sheet_name}'...")
-        try: worksheet = sheet.worksheet(sheet_name)
+        try: 
+            worksheet = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=sheet_name, rows="3000", cols="30")
+            # 🔥 कॉलम की संख्या 20 रखी है ताकि गूगल शीट Z लिमिट के कारण ब्लॉक न करे
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="3000", cols="20")
             worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
             print(f"✅ Created fresh tab: '{sheet_name}'")
             return
@@ -220,12 +221,14 @@ def upload_to_google_sheet(sheet, sheet_name, new_df, unique_cols=None):
             old_df = pd.DataFrame(raw_vals[1:], columns=raw_vals[0])
             combined = pd.concat([old_df, new_df], ignore_index=True)
             if unique_cols: combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
-        else: combined = new_df
+        else: 
+            combined = new_df
 
         worksheet.clear()
         worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
         print(f"🚀 SUCCESS: Sync complete for '{sheet_name}'")
-    except Exception as e: print(f"❌ Upload Error: {e}")
+    except Exception as e: 
+        print(f"❌ Upload Error on tab '{sheet_name}': {e}")
 
 if __name__ == "__main__":
     print("\n=== SCANNING NSE FOR LIVE FILES ===")
@@ -254,15 +257,14 @@ if __name__ == "__main__":
     df_master = get_master_participant_oi(saved_response, valid_date_obj)
     df_futures_breakup = calculate_futures_breakup(df_master)
     df_idx_options, df_stk_options = extract_script_wise_options(valid_date_obj)
-    
-    # ⚡ डेली चेंज ट्रैकर यहाँ एक्टिवेट हो गया है
     df_daily_changes = track_daily_changes(sheet, df_master, target_display_date)
     
     print("\n=== UPLOADING TO GOOGLE SHEET ===")
+    # सेफ अपलोड कॉल्स
     upload_to_google_sheet(sheet, 'Index_Wise_CE_PE_OI', df_idx_options, unique_cols=['Index_Name', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Stock_Wise_CE_PE_OI', df_stk_options, unique_cols=['Stock_Name', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Index_Stock_Futures_Breakup', df_futures_breakup, unique_cols=['Client_Type', 'Data_Date'])
-    upload_to_google_sheet(sheet, 'Fando_Daily_Changes_Dashboard', df_daily_changes, unique_cols=['Client_Type', 'Data_Date'])
+    upload_to_google_sheet(sheet, 'Fando_Daily_Changes', df_daily_changes, unique_cols=['Client_Type', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
     
     print("\n=== 🎉 ALL PROCESSES COMPLETED SUCCESSFULLY ===")
