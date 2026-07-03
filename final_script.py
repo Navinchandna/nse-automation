@@ -9,25 +9,25 @@ import urllib3
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import sys
+import time
 
-# Warnings बंद करना
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-headers = {'User-Agent': 'Mozilla/5.0'}
 
-# --- GOOGLE SHEETS CONNECTOR (FINAL SECURE ENGINE) ---
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Connection': 'keep-alive'
+}
+
 print("Connecting to Google Sheets...")
 try:
-    # गिटहब के सुरक्षित लॉकर (Settings -> Secrets) से डेटा उठाना
-    google_secrets = os.environ.get('GOOGLE_CREDENTIALS')
-    if not google_secrets:
-        raise ValueError("GOOGLE_CREDENTIALS secret not found on GitHub Settings!")
+    raw_env_data = os.environ.get('GOOGLE_CREDENTIALS')
+    if not raw_env_data:
+        raise ValueError("MY_SECRET_KEY is empty or not found in GitHub Env!")
     
-    # सीक्रेट टेक्स्ट को साफ़ करके JSON डिक्शनरी में बदलना
-    creds_dict = json.loads(google_secrets.strip())
-    
-    # न्यू लाइन कैरेक्टर को सही फॉर्मेट में सेट करना
+    creds_dict = json.loads(raw_env_data.strip())
     if "private_key" in creds_dict:
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
@@ -37,18 +37,24 @@ try:
     sheet = client.open("NSE_Market_Data")
     print("Successfully connected to Google Sheets Securely!")
 except Exception as e:
-    print(f"Secure Google Connection Failed! Details: {e}")
+    print(f"Google Connection Failed! Details: {e}")
     sys.exit(1)
 
-# NSE Archives डाउनलोडर
-def download_nse_archive(url):
+# Advanced NSE Downloader with Cookie Bypass
+def download_nse_with_cookies(url):
+    session = requests.Session()
+    session.verify = False
     try:
-        res = requests.get(url, headers=headers, verify=False, timeout=15)
-        if res.status_code == 200: return res
-    except: pass
+        # First hit homepage to get fresh cookies
+        session.get("https://www.nseindia.com", headers=headers, timeout=10)
+        time.sleep(2)
+        res = session.get(url, headers=headers, timeout=15)
+        if res.status_code == 200 and len(res.content) > 1000: # Ensure it's not an empty/error page
+            return res
+    except Exception as e:
+        print(f"Download failed for {url}: {e}")
     return None
 
-# --- 1. Stock Names Tracker ---
 def get_stock_wise_names_data():
     print("Fetching Stock Wise Bhavcopy...")
     try:
@@ -57,7 +63,7 @@ def get_stock_wise_names_data():
             date_file = target_date_obj.strftime("%d%b%Y").upper()
             display_date = target_date_obj.strftime("%Y-%m-%d")
             url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
-            response = download_nse_archive(url)
+            response = download_nse_with_cookies(url)
             if response:
                 with zipfile.ZipFile(io.BytesIO(response.content)) as z:
                     csv_name = f"fo{date_file}.csv"
@@ -76,7 +82,6 @@ def get_stock_wise_names_data():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 2. Master F&O Participant Data ---
 def get_master_participant_oi():
     print("Fetching Participant OI Data...")
     try:
@@ -85,7 +90,7 @@ def get_master_participant_oi():
             target_date_str = target_date_obj.strftime("%d%m%Y")
             display_date = target_date_obj.strftime("%Y-%m-%d")
             url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
-            response = download_nse_archive(url)
+            response = download_nse_with_cookies(url)
             if response:
                 lines = response.text.split('\n')
                 data_rows = [line.split(',') for line in lines if line.strip()][1:]
@@ -98,7 +103,6 @@ def get_master_participant_oi():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 3. Index Signal Calculator ---
 def calculate_index_signals(df_oi):
     if df_oi.empty: return pd.DataFrame()
     try:
@@ -113,7 +117,6 @@ def calculate_index_signals(df_oi):
         return df[['Data_Date', 'Client Type', 'Market_Signal', 'Option_Call_vs_Put_Antar', 'Future_Net_Antar', 'Call_Net', 'Put_Net', 'Download_Time']]
     except: return pd.DataFrame()
 
-# --- 4. Stock Signal Calculator ---
 def extract_stock_derivatives_data(df_master):
     if df_master.empty: return pd.DataFrame()
     try:
@@ -128,9 +131,10 @@ def extract_stock_derivatives_data(df_master):
         return df[['Data_Date', 'Client Type', 'Stock_Market_Signal', 'Stock_Option_Total_Antar', 'Stock_Future_Net', 'Stock_Call_Net', 'Stock_Put_Net', 'Download_Time']]
     except: return pd.DataFrame()
 
-# --- Google Sheets Append Engine ---
 def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
-    if new_df is None or new_df.empty: return
+    if new_df is None or new_df.empty: 
+        print(f"Skipping {sheet_name}: DataFrame is empty.")
+        return
     try:
         try:
             worksheet = sheet.worksheet(sheet_name)
@@ -147,7 +151,6 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
                 if col not in old_df.columns: old_df[col] = ''
             for col in old_df.columns:
                 if col not in new_df.columns: new_df[col] = ''
-            
             combined = pd.concat([old_df, new_df], ignore_index=True)
             if unique_cols:
                 combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
@@ -159,7 +162,6 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
     except Exception as e:
         print(f"Error uploading {sheet_name}: {e}")
 
-# --- Core Execution ---
 if __name__ == "__main__":
     print("Framework Started...")
     df_stock_names = get_stock_wise_names_data()
