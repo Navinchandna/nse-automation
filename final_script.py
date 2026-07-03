@@ -43,12 +43,13 @@ def download_nse_file(url):
     print(f"🌐 FETCHING -> {url}")
     session = requests.Session()
     try:
-        # COOKIE GENERATION PASS
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
         time.sleep(2)
         res = session.get(url, headers=headers, timeout=15)
         print(f"📥 Response Code: {res.status_code} | Size: {len(res.content)} bytes")
-        if res.status_code == 200 and len(res.content) > 1000:
+        
+        # ⚠️ फिक्स: लिमिट को 1000 से घटाकर 500 बाइट कर दिया है क्योंकि असली CSV छोटी होती है
+        if res.status_code == 200 and len(res.content) > 500:
             return res
     except Exception as e:
         print(f"❌ Network issue: {e}")
@@ -77,27 +78,22 @@ def get_stock_wise_names_data(available_date_obj):
             stock_summary.columns = ['STOCK_NAME', 'TOTAL_OPEN_INTEREST', 'TODAY_OI_CHANGE', 'LAST_PRICE', 'TREND_SIGNAL', 'Data_Date', 'Download_Time']
             return stock_summary
         except Exception as e:
-            print(f"❌ Error parsing Zip: {e}")
+            print(f"❌ Error parsing Zip (Bhavcopy might not be ready yet): {e}")
     return pd.DataFrame()
 
-def get_master_participant_oi(available_date_obj):
-    target_date_str = available_date_obj.strftime("%d%m%Y")
+def get_master_participant_oi(response_obj, available_date_obj):
     display_date = available_date_obj.strftime("%Y-%m-%d")
-    url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
-    
-    response = download_nse_file(url)
-    if response:
-        try:
-            lines = response.text.split('\n')
-            data_rows = [line.split(',') for line in lines if line.strip()][1:]
-            df = pd.DataFrame(data_rows)
-            df.columns = [c.replace('"', '').strip() for c in df.iloc[0]]
-            df = df[1:].reset_index(drop=True)
-            df['Data_Date'] = display_date
-            df['Download_Time'] = current_download_time
-            return df
-        except Exception as e:
-            print(f"❌ Error parsing CSV: {e}")
+    try:
+        lines = response_obj.text.split('\n')
+        data_rows = [line.split(',') for line in lines if line.strip()][1:]
+        df = pd.DataFrame(data_rows)
+        df.columns = [c.replace('"', '').strip() for c in df.iloc[0]]
+        df = df[1:].reset_index(drop=True)
+        df['Data_Date'] = display_date
+        df['Download_Time'] = current_download_time
+        return df
+    except Exception as e:
+        print(f"❌ Error parsing CSV: {e}")
     return pd.DataFrame()
 
 def calculate_index_signals(df_oi):
@@ -160,11 +156,10 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
 if __name__ == "__main__":
     print("\n=== SCANNING NSE FOR LIVE FILES ===")
     valid_date_obj = None
+    saved_response = None
     
-    # गिटहब रनर को बाईपास करने के लिए GET चेक का इस्तेमाल
     for i in range(0, 10):
         test_date = datetime.now() - timedelta(days=i)
-        # शनिवार-रविवार को स्किप करना
         if test_date.weekday() >= 5: 
             continue
             
@@ -175,24 +170,27 @@ if __name__ == "__main__":
         res = download_nse_file(url_check)
         if res:
             valid_date_obj = test_date
+            saved_response = res
             break
         time.sleep(1)
 
     if not valid_date_obj:
         print("❌ CRITICAL: NSE servers blocked data fetch or files not ready. Stopping pipeline.")
-        sys.exit(1) # अब यह 0 की जगह 1 पर एग्जिट होगा ताकि फेलियर का पता चले!
+        sys.exit(1)
         
     target_display_date = valid_date_obj.strftime("%Y-%m-%d")
     print(f"\n🎯 FINAL TRADING DATE DETECTED: {target_display_date}")
 
     print("\n=== PROCESSING CORES ===")
     df_stock_names = get_stock_wise_names_data(valid_date_obj)
-    df_master = get_master_participant_oi(valid_date_obj)
+    df_master = get_master_participant_oi(saved_response, valid_date_obj)
     df_index_signals = calculate_index_signals(df_master)
     df_stock_signals = extract_stock_derivatives_data(df_master)
     
     print("\n=== UPLOADING TO GOOGLE SHEET ===")
     upload_to_google_sheet('Stock_Wise_Names_Live', df_stock_names, unique_cols=['STOCK_NAME', 'Data_Date'])
+    upload_to_sheet_names = ['Stock_Derivatives_OI', 'Trading_Signals_Color', 'Derivatives_OI_Data']
+    
     upload_to_google_sheet('Stock_Derivatives_OI', df_stock_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Trading_Signals_Color', df_index_signals, unique_cols=['Client Type', 'Data_Date'])
     upload_to_google_sheet('Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
