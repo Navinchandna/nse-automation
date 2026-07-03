@@ -3,7 +3,7 @@ name: NSE Automation Tracker
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 14 * * 1-5' # सोमवार से शुक्रवार हर शाम 8:00 PM IST (14:30 UTC) पर खुद चलेगा
+    - cron: '30 14 * * 1-5' # सोमवार से शुक्रवार हर शाम 8:00 PM IST पर खुद चलेगा
 
 jobs:
   build-and-run:
@@ -17,7 +17,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+          # यहाँ से कैशे वाली लाइन हटा दी गई है ताकि एरर न आए
 
       - name: Install Trading Libraries
         run: |
