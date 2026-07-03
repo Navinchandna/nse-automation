@@ -10,6 +10,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import sys
 import time
+import traceback  # फुल डीबगिंग के लिए
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 current_download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -20,22 +21,58 @@ headers = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
-# --- GOOGLE SHEETS CONNECTOR (FIXED) ---
-print("Connecting to Google Sheets...")
+# ==========================================
+# 🛑 FULL DEBUGGING & GOOGLE CONNECTOR ENGINE
+# ==========================================
+print("=== STARTING GOOGLE SHEETS CONNECTION TEST ===")
+
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # गिटहब वर्कफ्लो द्वारा बनाई गई फाइल से सीधे क्रेडेंशियल्स लोड करना
-    if os.path.exists("google_creds.json"):
-        creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", scope)
-    else:
-        raise FileNotFoundError("google_creds.json file not found by runner!")
+    # 1. चेक करना कि क्या फाइल सच में बनी
+    if not os.path.exists("google_creds.json"):
+        print("❌ DEBUG: google_creds.json file DOES NOT exist at all!")
+        sys.exit(1)
         
+    # 2. फाइल के अंदर झाँक कर देखना (कंटेंट क्या है)
+    with open("google_creds.json", "r") as f:
+        file_content = f.read().strip()
+    
+    print(f"📊 DEBUG: File Content Length = {len(file_content)} characters")
+    if len(file_content) > 0:
+        print(f"📊 DEBUG: First 30 characters of file = '{file_content[:30]}'")
+        print(f"📊 DEBUG: Last 20 characters of file = '{file_content[-20:]}'")
+    else:
+        print("❌ DEBUG: File is completely EMPTY!")
+        sys.exit(1)
+
+    # 3. क्रेडेंशियल लोड करने की कोशिश
+    print("⏳ DEBUG: Attempting to parse JSON and authorize with Google...")
+    
+    # अगर फाइल JSON नहीं है, तो json.loads यहाँ एरर फेंक देगा
+    try:
+        json_test = json.loads(file_content)
+        print("✅ DEBUG: File is a valid JSON structure!")
+        if "private_key" not in json_test:
+            print("❌ DEBUG ALERT: 'private_key' field is MISSING inside JSON!")
+    except Exception as json_err:
+        print(f"❌ DEBUG ALERT: Content is NOT a valid JSON! JSON Error: {json_err}")
+
+    creds = ServiceAccountCredentials.from_json_keyfile_name("google_creds.json", scope)
     client = gspread.authorize(creds)
+    
+    print("⏳ DEBUG: Google Authorized. Now trying to open the specific spreadsheet 'NSE_Market_Data'...")
     sheet = client.open("NSE_Market_Data")
-    print("Successfully connected to Google Sheets!")
+    print("===> ✅ SUCCESS: Connected to Google Sheets perfectly!")
+
 except Exception as e:
-    print(f"Google Connection Failed! Real Details: {e}")
+    print("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    print("❌ CRITICAL BUG DETECTED! HERE ARE THE FULL DETAILS:")
+    print(f"Error Type: {type(e).__name__}")
+    print(f"Error Message/String: {e}")
+    print("\n--- FULL STACK TRACEBACK (EXACT LINE OF FAILURE) ---")
+    traceback.print_exc() # यह प्रिंट करेगा कि पायथन किस लाइन पर मरा
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
     sys.exit(1)
 
 # --- CHECK IF DATA ALREADY EXISTS IN SHEET ---
@@ -69,7 +106,6 @@ def get_stock_wise_names_data(available_date_obj=None):
     date_file = available_date_obj.strftime("%d%b%Y").upper()
     display_date = available_date_obj.strftime("%Y-%m-%d")
     print(f"Downloading Stock Wise Bhavcopy for {display_date}...")
-    
     url = f"https://archives.nseindia.com/content/fo/fo{date_file}.zip"
     response = download_nse_file(url)
     if response:
@@ -96,7 +132,6 @@ def get_master_participant_oi(available_date_obj=None):
     target_date_str = available_date_obj.strftime("%d%m%Y")
     display_date = available_date_obj.strftime("%Y-%m-%d")
     print(f"Downloading Participant OI Data for {display_date}...")
-    
     url = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{target_date_str}.csv"
     response = download_nse_file(url)
     if response:
@@ -148,7 +183,6 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
             worksheet = sheet.add_worksheet(title=sheet_name, rows="2000", cols="20")
             worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
             return
-
         existing_records = worksheet.get_all_records()
         if existing_records:
             old_df = pd.DataFrame(existing_records)
@@ -157,10 +191,8 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
             for col in old_df.columns:
                 if col not in new_df.columns: new_df[col] = ''
             combined = pd.concat([old_df, new_df], ignore_index=True)
-            if unique_cols:
-                combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
+            if unique_cols: combined.drop_duplicates(subset=unique_cols, keep='last', inplace=True)
         else: combined = new_df
-
         worksheet.clear()
         worksheet.update([combined.columns.values.tolist()] + combined.fillna('').astype(str).values.tolist())
         print(f"Successfully uploaded/appended: {sheet_name}")
@@ -169,14 +201,11 @@ def upload_to_google_sheet(sheet_name, new_df, unique_cols=None):
 
 if __name__ == "__main__":
     print("Framework Started...")
-    
-    # 1. NSE पर कौन सी लेटेस्ट तारीख का डेटा उपलब्ध है, चेक करें
     valid_date_obj = None
     for i in range(0, 10):
         test_date = datetime.now() - timedelta(days=i)
         test_date_str = test_date.strftime("%d%m%Y")
         url_check = f"https://archives.nseindia.com/content/nsccl/fao_participant_oi_{test_date_str}.csv"
-        
         session = requests.Session()
         session.verify = False
         try:
@@ -194,15 +223,12 @@ if __name__ == "__main__":
     target_display_date = valid_date_obj.strftime("%Y-%m-%d")
     print(f"Latest available date on NSE is: {target_display_date}")
 
-    # 2. चेक करें कि क्या इस तारीख का डेटा पहले से गूगल शीट में मौजूद है?
     print("Checking if this date already exists in your Google Sheet...")
     already_exists = check_date_exists_in_sheet('Derivatives_OI_Data', target_display_date)
-    
     if already_exists:
         print(f"Data for {target_display_date} ALREADY EXISTS in Google Sheet. Skipping execution.")
         sys.exit(0)
         
-    # 3. अगर डेटा नहीं है, तो डाउनलोड और अपलोड करें
     print(f"Data for {target_display_date} is missing. Starting fresh download...")
     df_stock_names = get_stock_wise_names_data(valid_date_obj)
     df_master = get_master_participant_oi(valid_date_obj)
