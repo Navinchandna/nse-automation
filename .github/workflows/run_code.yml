@@ -18,11 +18,13 @@ jobs:
       with:
         python-version: '3.11' # यहाँ हमने वर्ज़न अपग्रेड कर दिया
         
-    - name: Install Trading Libraries
-      run: |
-        pip install pandas requests urllib3 gspread oauth2client openpyxl
-        
-    - name: Execute Live Tracker
-      env:
-        GOOGLE_CREDENTIALS: ${{ secrets.MY_SECRET_KEY }}
+    # ... पुराना ऊपर का कोड वैसा ही रहने दें (Install Trading Libraries तक) ...
+
+      - name: Execute Live Tracker
+        env:
+          MY_SECRET_KEY: ${{ secrets.MY_SECRET_KEY }}
+        run: |
+          # सीक्रेट को सीधे एक सीक्रेट फाइल में राइट करना
+          echo "$MY_SECRET_KEY" > google_creds.json
+          python final_script.pyts.MY_SECRET_KEY }}
       run: python final_script.py
