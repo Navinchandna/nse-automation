@@ -53,7 +53,7 @@ def download_nse_file(url):
         print(f"❌ Network issue: {e}")
     return None
 
-# 📊 न्यू स्क्रिप्ट-वाइज एनालिसिस इंजन (नाम के साथ CE/PE डेटा)
+# 📊 1. नाम के हिसाब से इंडेक्स और स्टॉक के CE/PE का डेटा निकालना
 def extract_script_wise_options(available_date_obj):
     date_file = available_date_obj.strftime("%d%b%Y").upper()
     display_date = available_date_obj.strftime("%Y-%m-%d")
@@ -61,26 +61,21 @@ def extract_script_wise_options(available_date_obj):
     
     response = download_nse_file(url)
     if not response:
-        print("⚠️ Bhavcopy file could not be downloaded for script-wise analysis.")
         return pd.DataFrame(), pd.DataFrame()
         
     try:
         with zipfile.ZipFile(io.BytesIO(response.content)) as z:
             csv_name = f"fo{date_file}.csv"
-            with z.open(csv_name) as f: 
-                df = pd.read_csv(f)
+            with z.open(csv_name) as f: df = pd.read_csv(f)
                 
         df.columns = [c.strip() for c in df.columns]
-        
-        # केवल ऑप्शंस इंस्ट्रूमेंट्स फिल्टर करना (OPTIDX = Index Options, OPTSTK = Stock Options)
         df_options = df[df['INSTRUMENT'].isin(['OPTIDX', 'OPTSTK'])].copy()
         df_options['OPEN_INT'] = pd.to_numeric(df_options['OPEN_INT'], errors='coerce').fillna(0)
         df_options['CHG_IN_OI'] = pd.to_numeric(df_options['CHG_IN_OI'], errors='coerce').fillna(0)
         
-        # 1️⃣ इंडेक्स वाइज कैलकुलेशन (NIFTY, BANKNIFTY, etc.)
+        # इंडेक्स कैलकुलेशन
         df_idx = df_options[df_options['INSTRUMENT'] == 'OPTIDX']
         idx_grp = df_idx.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
-        
         idx_pivot = idx_grp.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
         idx_pivot.columns = [f"{col[1]}_{col[0]}" for col in idx_pivot.columns]
         idx_pivot = idx_pivot.reset_index()
@@ -94,10 +89,9 @@ def extract_script_wise_options(available_date_obj):
         idx_final['Put_OI_Change'] = idx_pivot['PE_CHG_IN_OI'].astype(int)
         idx_final['Download_Time'] = [current_download_time] * len(idx_pivot)
         
-        # 2️⃣ स्टॉक वाइज कैलकुलेशन (Reliance, Kotak, etc. - Only Real F&O Stocks)
+        # स्टॉक कैलकुलेशन (Only Real F&O Stocks)
         df_stk = df_options[df_options['INSTRUMENT'] == 'OPTSTK']
         stk_grp = df_stk.groupby(['SYMBOL', 'OPTION_TYP']).agg({'OPEN_INT': 'sum', 'CHG_IN_OI': 'sum'}).reset_index()
-        
         stk_pivot = stk_grp.pivot(index='SYMBOL', columns='OPTION_TYP', values=['OPEN_INT', 'CHG_IN_OI']).fillna(0)
         stk_pivot.columns = [f"{col[1]}_{col[0]}" for col in stk_pivot.columns]
         stk_pivot = stk_pivot.reset_index()
@@ -111,13 +105,12 @@ def extract_script_wise_options(available_date_obj):
         stk_final['Put_OI_Change'] = stk_pivot['PE_CHG_IN_OI'].astype(int)
         stk_final['Download_Time'] = [current_download_time] * len(stk_pivot)
         
-        # सबसे ज्यादा एक्टिव ऑप्शंस वाले स्टॉक्स को ऊपर दिखाने के लिए सॉर्ट करना
         stk_final['Absolute_Chg'] = stk_final['Call_OI_Change'].abs() + stk_final['Put_OI_Change'].abs()
         stk_final = stk_final.sort_values(by='Absolute_Chg', ascending=False).drop(columns=['Absolute_Chg']).reset_index(drop=True)
         
         return idx_final, stk_final
     except Exception as e:
-        print(f"❌ Error in script wise processing: {e}")
+        print(f"❌ Error in script wise options processing: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
 def get_master_participant_oi(response_obj, available_date_obj):
@@ -134,6 +127,60 @@ def get_master_participant_oi(response_obj, available_date_obj):
     except Exception as e:
         print(f"❌ Error parsing CSV: {e}")
     return pd.DataFrame()
+
+# 📊 2. डेली चेंज कैलकुलेटर इंजन (Figures & % Change Tracker)
+def track_daily_changes(sheet, new_master_df, current_date_str):
+    print("⏳ Calculating daily changes over previous trading day...")
+    try:
+        try:
+            worksheet = sheet.worksheet('Derivatives_OI_Data')
+            raw_vals = worksheet.get_all_values()
+        except:
+            print("⚠️ Derivatives_OI_Data tab not found. Skipping daily changes.")
+            return pd.DataFrame()
+
+        if len(raw_vals) <= 1: return pd.DataFrame()
+
+        df_historical = pd.DataFrame(raw_vals[1:], columns=raw_vals[0])
+        df_old_days = df_historical[df_historical['Data_Date'] != current_date_str]
+        if df_old_days.empty: return pd.DataFrame()
+
+        last_available_date = df_old_days['Data_Date'].max()
+        df_prev_day = df_old_days[df_old_days['Data_Date'] == last_available_date].copy()
+        print(f"📊 Comparing today ({current_date_str}) against last saved sheet date ({last_available_date})")
+
+        change_rows = []
+        numeric_cols = [
+            'Future Index Long', 'Future Index Short', 'Future Stock Long', 'Future Stock Short',
+            'Option Index Call Long', 'Option Index Call Short', 'Option Index Put Long', 'Option Index Put Short',
+            'Option Stock Call Long', 'Option Stock Call Short', 'Option Stock Put Long', 'Option Stock Put Short'
+        ]
+
+        for client in ['CLIENT', 'DII', 'FII', 'PRO', 'TOTAL']:
+            today_client = new_master_df[new_master_df['Client Type'] == client]
+            prev_client = df_prev_day[df_prev_day['Client Type'] == client]
+
+            if today_client.empty or prev_client.empty: continue
+
+            row_data = {'Data_Date': current_date_str, 'Compared_With_Date': last_available_date, 'Client_Type': client}
+
+            for col in numeric_cols:
+                val_today = pd.to_numeric(today_client[col].values[0], errors='coerce') or 0
+                val_prev = pd.to_numeric(prev_client[col].values[0], errors='coerce') or 0
+
+                diff = val_today - val_prev
+                pct_change = (diff / val_prev * 100) if val_prev != 0 else (100.0 if diff > 0 else 0.0)
+
+                col_clean = col.replace(' ', '_')
+                row_data[f'{col_clean}_Chg_Qty'] = int(diff)
+                row_data[f'{col_clean}_Chg_Pct'] = f"{pct_change:+.1f}%"
+
+            change_rows.append(row_data)
+
+        return pd.DataFrame(change_rows)
+    except Exception as e:
+        print(f"❌ Error in daily change calculation: {e}")
+        return pd.DataFrame()
 
 def calculate_futures_breakup(df_master):
     if df_master.empty: return pd.DataFrame()
@@ -163,7 +210,7 @@ def upload_to_google_sheet(sheet, sheet_name, new_df, unique_cols=None):
         print(f"⏳ Syncing tab: '{sheet_name}'...")
         try: worksheet = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=sheet_name, rows="3000", cols="25")
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="3000", cols="30")
             worksheet.update([new_df.columns.values.tolist()] + new_df.fillna('').values.tolist())
             print(f"✅ Created fresh tab: '{sheet_name}'")
             return
@@ -206,14 +253,16 @@ if __name__ == "__main__":
     print("\n=== PROCESSING CORES ===")
     df_master = get_master_participant_oi(saved_response, valid_date_obj)
     df_futures_breakup = calculate_futures_breakup(df_master)
-    
-    # ⚡ नाम के साथ इंडेक्स और स्टॉक्स के ऑप्शंस का डेटा निकालना
     df_idx_options, df_stk_options = extract_script_wise_options(valid_date_obj)
+    
+    # ⚡ डेली चेंज ट्रैकर यहाँ एक्टिवेट हो गया है
+    df_daily_changes = track_daily_changes(sheet, df_master, target_display_date)
     
     print("\n=== UPLOADING TO GOOGLE SHEET ===")
     upload_to_google_sheet(sheet, 'Index_Wise_CE_PE_OI', df_idx_options, unique_cols=['Index_Name', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Stock_Wise_CE_PE_OI', df_stk_options, unique_cols=['Stock_Name', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Index_Stock_Futures_Breakup', df_futures_breakup, unique_cols=['Client_Type', 'Data_Date'])
+    upload_to_google_sheet(sheet, 'Fando_Daily_Changes_Dashboard', df_daily_changes, unique_cols=['Client_Type', 'Data_Date'])
     upload_to_google_sheet(sheet, 'Derivatives_OI_Data', df_master, unique_cols=['Client Type', 'Data_Date'])
     
     print("\n=== 🎉 ALL PROCESSES COMPLETED SUCCESSFULLY ===")
